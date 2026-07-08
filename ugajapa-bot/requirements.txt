@@ -1,0 +1,8 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+transformers==4.47.1
+sentencepiece==0.2.0
+protobuf==5.29.2
+pydantic==2.10.4
+# torch is installed separately from the CPU index in the Dockerfile
+# to avoid the ~900MB CUDA wheel download timeout.

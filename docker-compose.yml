@@ -1,0 +1,66 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ugajapa-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mmuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mmuser_password}
+      POSTGRES_DB: ${POSTGRES_DB:-ugajapa_api}
+    ports:
+      - "5432:5432"
+    volumes:
+      - ugajapa_pgdata:/var/lib/postgresql/data
+      - ./translation-api/sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mmuser} -d ${POSTGRES_DB:-ugajapa_api}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  ugajapa-bot:
+    build: ./ugajapa-bot
+    container_name: ugajapa-bot
+    ports:
+      - "8000:8000"
+    # Bot stays reachable on localhost for local plugin testing;
+    # do not expose 8000 publicly in production.
+    volumes:
+      - ugajapa_model_cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+
+  translation-api:
+    build: ./translation-api
+    container_name: ugajapa-translation-api
+    ports:
+      - "5000:5000"
+    environment:
+      PORT: 5000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mmuser}:${POSTGRES_PASSWORD:-mmuser_password}@postgres:5432/${POSTGRES_DB:-ugajapa_api}
+      JWT_SECRET: ${JWT_SECRET:-your-very-long-random-secret-here}
+      BOT_URL: http://ugajapa-bot:8000
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      SUNBIRD_API_URL: ${SUNBIRD_API_URL:-https://api.sunbird.ai/translate}
+      SUNBIRD_API_KEY: ${SUNBIRD_API_KEY:-}
+      BILLING_CRON_SECRET: ${BILLING_CRON_SECRET:-another-random-secret}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@ugajapa.ac.ug}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-ChangeMeAdmin123!}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ugajapa-bot:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  ugajapa_pgdata:
+  ugajapa_model_cache:
