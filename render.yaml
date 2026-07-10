@@ -60,11 +60,11 @@ services:
         value: "3600"
       - key: BACK_TRANSLATION_ENABLED
         value: "false"
+      - key: ADMIN_EMAIL
+        value: xwalesebabe@gmail.com
       - key: GROQ_API_KEY
         sync: false
       - key: GOOGLE_API_KEY
-        sync: false
-      - key: ADMIN_EMAIL
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
