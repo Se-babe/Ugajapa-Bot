@@ -1,5 +1,6 @@
 # UgaJapa Translation API — Render Blueprint
-# Deploy: Dashboard → New → Blueprint → connect this repo
+# Repo: https://github.com/Se-babe/Ugajapa-Bot
+# Deploy: https://dashboard.render.com/blueprint/new?repo=https://github.com/Se-babe/Ugajapa-Bot
 # Set GROQ_API_KEY, GOOGLE_API_KEY, ADMIN_EMAIL, ADMIN_PASSWORD after first deploy.
 
 databases:
@@ -38,8 +39,6 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: "5000"
       - key: DATABASE_URL
         fromDatabase:
           name: ugajapa-postgres
