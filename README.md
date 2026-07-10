@@ -143,37 +143,44 @@ ugajapa-translation-api/
 
 Confidential — Akademia Japan Co., Ltd. | July 2026
 
-## Deploy on Render (production)
+## Deploy on Render
 
-Deploy from **[github.com/Se-babe/Ugajapa-Bot](https://github.com/Se-babe/Ugajapa-Bot)** — the repo includes a [Render Blueprint](https://render.com/docs/blueprint-spec) (`render.yaml`) that provisions:
+Deploy from **[github.com/Se-babe/Ugajapa-Bot](https://github.com/Se-babe/Ugajapa-Bot)** — `render.yaml` uses the **FREE** tier by default:
 
-| Resource | Type | Purpose |
+| Resource | Plan | Purpose |
 |----------|------|---------|
-| `ugajapa-postgres` | PostgreSQL | Users, API keys, usage, billing |
-| `ugajapa-bot` | Private service | NLLB fallback engine (internal only) |
-| `translation-api` | Web service | Public API + dashboard |
+| `ugajapa-postgres` | **Free** | Users, API keys, usage, billing |
+| `translation-api` | **Free** | Public API + dashboard |
+
+Translations use **Groq + Google** (configured via API keys). The NLLB bot is **not** included on free tier (needs 2 GB+ RAM; free web services only have 512 MB).
 
 ### Quick deploy (Blueprint)
 
-1. Open **[Deploy to Render](https://dashboard.render.com/blueprint/new?repo=https://github.com/Se-babe/Ugajapa-Bot)** (or Dashboard → **New** → **Blueprint** → connect `Se-babe/Ugajapa-Bot`).
-2. Sign in with GitHub and grant Render access to the **Se-babe** org/repo.
-3. Review the three services + database and click **Apply**.
-4. While deploy runs, open **translation-api** → **Environment** and add:
+1. Open **[Deploy to Render](https://dashboard.render.com/blueprint/new?repo=https://github.com/Se-babe/Ugajapa-Bot)**.
+2. Blueprint path: `render.yaml` · Branch: `main`.
+3. On the review screen, fill only:
+   - `GROQ_API_KEY`
+   - `GOOGLE_API_KEY`
+   - `ADMIN_PASSWORD`  
+   (`ADMIN_EMAIL` is pre-filled.)
+4. Click **Apply** — wait for **translation-api** and **ugajapa-postgres** to go Live (~5 min).
+5. Open `https://translation-api-<id>.onrender.com`.
 
-   | Variable | Required | Notes |
-   |----------|----------|-------|
-   | `GROQ_API_KEY` | Yes | LLM translation + Whisper STT |
-   | `GOOGLE_API_KEY` | Yes | Translate, Speech, TTS |
-   | `ADMIN_EMAIL` | Yes | Dashboard admin login |
-   | `ADMIN_PASSWORD` | Yes | Strong production password |
+### Free tier limits
 
-   `JWT_SECRET` and `BILLING_CRON_SECRET` are auto-generated.
+| Limit | What it means |
+|-------|----------------|
+| **Cold starts** | API sleeps after ~15 min idle; first request may take 30–60 s |
+| **Postgres free** | Database expires after **90 days** on free — export data or upgrade before then |
+| **No NLLB bot** | Groq + Google still translate all languages; bot fallback unavailable |
+| **External API costs** | Groq/Google usage still billed by those providers |
 
-5. Wait until all services show **Live**:
-   - `ugajapa-postgres` — ~1 min
-   - `translation-api` — ~3–5 min
-   - `ugajapa-bot` — ~10–15 min (PyTorch + transformers build)
-6. Open `https://translation-api-<id>.onrender.com` → log in → generate API key → test translate.
+### Upgrade to paid (production)
+
+Use `render.paid.yaml` (~$39/mo) for always-on API + NLLB bot fallback:
+
+- Blueprint path: `render.paid.yaml`
+- Adds `ugajapa-bot` (Standard, 2 GB) + Starter postgres + Starter API
 
 ### After deploy
 
@@ -182,36 +189,14 @@ Deploy from **[github.com/Se-babe/Ugajapa-Bot](https://github.com/Se-babe/Ugajap
 | **Public API URL** | translation-api service → top of page |
 | **Dashboard** | Same URL in browser |
 | **Admin login** | `ADMIN_EMAIL` / `ADMIN_PASSWORD` |
-| **Plugin setting** | Translation API URL = your Render URL |
-| **Health check** | `GET /health` on the public URL |
+| **Auto-sync .env** | `RENDER_API_KEY=... node scripts/sync-render-env.mjs` |
 
-### Architecture on Render
+### Architecture (free tier)
 
 ```
-Internet → translation-api (public web)
-                ↓ internal network
-           ugajapa-bot (private service)
+Internet → translation-api (free web)
                 ↓
-           ugajapa-postgres (managed DB)
+           Groq + Google APIs
+                ↓
+           ugajapa-postgres (free DB)
 ```
-
-External engines (Groq, Google) are called from **translation-api** only. The NLLB bot is never exposed publicly.
-
-### Notes
-
-- **Starter plan** on `translation-api` avoids cold starts for real-world use.
-- **Standard plan** on `ugajapa-bot` (2 GB RAM) — upgrade to **Pro** if the bot runs out of memory on first translation.
-- Postgres SSL is automatic; schema is applied on first API startup.
-- **Custom domain** (optional): translation-api → Settings → Custom Domains → e.g. `api.ugajapa.ac.ug`
-- Redeploys: push to `main` on [Ugajapa-Bot](https://github.com/Se-babe/Ugajapa-Bot) → Render auto-deploys.
-
-### Estimated monthly cost (Render)
-
-| Service | Plan | ~Cost |
-|---------|------|-------|
-| translation-api | Starter | $7 |
-| ugajapa-bot | Standard | $25 |
-| PostgreSQL | Starter | $7 |
-| **Total** | | **~$39/mo** |
-
-Use **Free** tiers only for demos (services sleep when idle).

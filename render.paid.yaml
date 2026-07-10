@@ -1,25 +1,38 @@
-# UgaJapa Translation API — Render Blueprint (FREE tier)
-# Repo: https://github.com/Se-babe/Ugajapa-Bot
-# Deploy: https://dashboard.render.com/blueprint/new?repo=https://github.com/Se-babe/Ugajapa-Bot
+# UgaJapa Translation API — Render Blueprint (PAID — full stack with NLLB bot)
+# Use this file only if you upgrade to paid plans (~$39/mo).
+# Rename to render.yaml or set Blueprint Path to render.paid.yaml
 #
-# Free tier: translation-api + postgres only (~$0/mo).
-# Groq + Google engines handle all translations (no NLLB bot — needs paid RAM).
-# Set GROQ_API_KEY, GOOGLE_API_KEY, ADMIN_PASSWORD on the review screen.
+# Includes: postgres (starter) + ugajapa-bot (standard, 2GB) + translation-api (starter)
 
 databases:
   - name: ugajapa-postgres
     databaseName: ugajapa_api
-    plan: free
+    plan: starter
     region: oregon
 
 services:
-  # Public Translation API + dashboard
+  - type: pserv
+    name: ugajapa-bot
+    runtime: docker
+    dockerfilePath: ./ugajapa-bot/Dockerfile
+    dockerContext: ./ugajapa-bot
+    plan: standard
+    region: oregon
+    healthCheckPath: /health
+    envVars:
+      - key: HF_HOME
+        value: /data/huggingface
+    disk:
+      name: hf-model-cache
+      mountPath: /data/huggingface
+      sizeGB: 5
+
   - type: web
     name: translation-api
     runtime: docker
     dockerfilePath: ./translation-api/Dockerfile
     dockerContext: ./translation-api
-    plan: free
+    plan: starter
     region: oregon
     healthCheckPath: /health
     envVars:
@@ -29,6 +42,11 @@ services:
         fromDatabase:
           name: ugajapa-postgres
           property: connectionString
+      - key: BOT_URL
+        fromService:
+          type: pserv
+          name: ugajapa-bot
+          property: hostport
       - key: JWT_SECRET
         generateValue: true
       - key: BILLING_CRON_SECRET
