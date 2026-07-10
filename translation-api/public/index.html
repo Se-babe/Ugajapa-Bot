@@ -182,6 +182,15 @@
     .nav-back { display: none; }
     .dash-content { padding: 20px 16px 40px; }
   }
+
+  @media (max-width: 480px) {
+    header { padding: 14px 16px; flex-wrap: wrap; gap: 8px; }
+    header h1 { font-size: 16px; }
+    header .sub { display: none; }
+    #authView { margin: 24px auto; }
+    .card { padding: 16px 14px; }
+    .tabs button { min-width: 80px; font-size: 13px; }
+  }
   .card {
     background: var(--card);
     border: 1px solid var(--border);
@@ -233,12 +242,13 @@
   .tabs button.active { background: var(--navy); color: #fff; border-color: var(--navy); }
   .error { color: var(--red); font-size: 13px; margin: -6px 0 12px; }
   .msg { color: var(--green); font-size: 13px; margin: -6px 0 12px; }
-  .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
   .muted { color: var(--muted); font-size: 13px; }
   .bar-track { background: var(--border); border-radius: 6px; height: 10px; overflow: hidden; margin-top: 8px; }
   .bar-fill { background: var(--navy); height: 100%; transition: width .3s; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); }
+  table { width: 100%; min-width: 480px; border-collapse: collapse; font-size: 13px; display: block; overflow-x: auto; white-space: nowrap; }
+  table thead, table tbody, table tr { display: table; width: 100%; table-layout: fixed; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); white-space: normal; }
   th { color: var(--muted); font-weight: 500; }
   code { background: #eef1f4; padding: 2px 6px; border-radius: 4px; font-size: 12.5px; }
   pre {
@@ -417,6 +427,15 @@
         <div class="error" id="signupError"></div>
         <button type="submit">Create account</button>
       </form>
+      <form id="verifyForm" style="display:none;">
+        <p class="muted" style="margin-top:0;">We sent a 6-digit code to <strong id="verifyEmailLabel"></strong>. Enter it below to activate your account.</p>
+        <label>Verification code</label>
+        <input type="text" id="verifyCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autocomplete="one-time-code" />
+        <div class="error" id="verifyError"></div>
+        <div class="msg" id="verifyMsg"></div>
+        <button type="submit">Verify & continue</button>
+        <button type="button" id="resendCodeBtn" class="secondary" style="margin-top:10px;width:100%;">Resend code</button>
+      </form>
     </div>
   </div>
 
@@ -432,6 +451,7 @@
             <button data-panel="languages">Languages</button>
             <button data-panel="keys">API Keys</button>
             <button data-panel="settings" data-settings-entry="general">Settings</button>
+            <button data-panel="admin" id="navAdminBtn" style="display:none;">Admin</button>
           </nav>
         </div>
         <div id="navSettings" style="display:none;">
@@ -782,6 +802,31 @@
       </div>
     </div>
 
+    <div id="panel-admin" class="dash-panel">
+      <div class="page-header">
+        <h2>Admin — Users &amp; API Keys</h2>
+        <p>Platform-wide account and key management. Visible only to admin accounts.</p>
+      </div>
+      <div class="card">
+        <h3>Users</h3>
+        <table>
+          <thead>
+            <tr><th>Email</th><th>Plan</th><th>Status</th><th>Chars (month)</th><th>Joined</th><th></th></tr>
+          </thead>
+          <tbody id="adminUsersBody"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div id="adminKeysCard" class="card" style="display:none;">
+        <h3>Keys — <span id="adminKeysUserEmail"></span></h3>
+        <table>
+          <thead>
+            <tr><th>Name</th><th>Key</th><th>Created</th><th>Last used</th><th>Status</th><th></th></tr>
+          </thead>
+          <tbody id="adminKeysBody"></tbody>
+        </table>
+      </div>
+    </div>
+
       </div>
     </div>
   </div>
@@ -811,7 +856,11 @@
       },
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || data.detail || ("HTTP " + res.status));
+    if (!res.ok) {
+      const err = new Error(data.error || data.detail || ("HTTP " + res.status));
+      if (data.code) err.code = data.code;
+      throw err;
+    }
     return data;
   }
 
@@ -870,9 +919,106 @@
         enterSettingsNav(btn.dataset.settingsEntry || "general");
       } else {
         showPanel(btn.dataset.panel);
+        if (btn.dataset.panel === "admin") loadAdminUsers();
       }
     };
   });
+
+  let isAdminAccount = false;
+
+  /** Admin accounts get the Admin panel only — no customer-facing nav/data. */
+  async function applyRoleView() {
+    try {
+      const profile = await api("/auth/me");
+      isAdminAccount = profile.role === "admin";
+    } catch (_) {
+      isAdminAccount = false;
+    }
+
+    document.querySelectorAll(".dash-nav button").forEach((b) => {
+      const isAdminBtn = b.dataset.panel === "admin";
+      b.style.display = isAdminAccount ? (isAdminBtn ? "block" : "none") : (isAdminBtn ? "none" : "block");
+    });
+
+    if (isAdminAccount) {
+      lastMainPanel = "admin";
+      showPanel("admin");
+    }
+  }
+
+  let adminUsersLoaded = false;
+
+  async function loadAdminUsers() {
+    if (adminUsersLoaded) return;
+    const body = $("adminUsersBody");
+    try {
+      const data = await api("/admin/users");
+      body.innerHTML = "";
+      if (!data.users || !data.users.length) {
+        body.innerHTML = '<tr><td colspan="6" class="muted">No users yet.</td></tr>';
+        adminUsersLoaded = true;
+        return;
+      }
+      for (const u of data.users) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${escapeHtml(u.email)}</td>
+          <td>${escapeHtml(u.plan)}</td>
+          <td><span class="badge ${u.active ? "active" : "revoked"}">${u.active ? "Active" : "Deactivated"}</span></td>
+          <td>${(u.characters_this_month || 0).toLocaleString()}</td>
+          <td class="muted">${u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}</td>
+          <td><button class="secondary view-keys-btn" data-user-id="${u.user_id}" data-user-email="${escapeHtml(u.email)}">View keys</button></td>
+        `;
+        body.appendChild(tr);
+      }
+      body.querySelectorAll(".view-keys-btn").forEach((btn) => {
+        btn.onclick = () => loadAdminKeys(btn.dataset.userId, btn.dataset.userEmail);
+      });
+      adminUsersLoaded = true;
+    } catch (err) {
+      body.innerHTML = `<tr><td colspan="6" class="error">${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+
+  async function loadAdminKeys(userId, email) {
+    $("adminKeysCard").style.display = "block";
+    $("adminKeysUserEmail").textContent = email;
+    const body = $("adminKeysBody");
+    body.innerHTML = '<tr><td colspan="6" class="muted">Loading…</td></tr>';
+    try {
+      const data = await api("/admin/users/" + userId + "/keys");
+      body.innerHTML = "";
+      if (!data.keys.length) {
+        body.innerHTML = '<tr><td colspan="6" class="muted">No API keys.</td></tr>';
+        return;
+      }
+      for (const k of data.keys) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${escapeHtml(k.name)}</td>
+          <td><code>${escapeHtml(k.key_value)}</code></td>
+          <td class="muted">${new Date(k.created_at).toLocaleDateString()}</td>
+          <td class="muted">${k.last_used ? new Date(k.last_used).toLocaleDateString() : "never"}</td>
+          <td><span class="badge ${k.revoked ? "revoked" : "active"}">${k.revoked ? "Revoked" : "Active"}</span></td>
+          <td>${k.revoked ? "" : `<button class="danger admin-revoke-btn" data-key-id="${k.key_id}">Revoke</button>`}</td>
+        `;
+        body.appendChild(tr);
+      }
+      body.querySelectorAll(".admin-revoke-btn").forEach((btn) => {
+        btn.onclick = async () => {
+          if (!confirm("Revoke this API key? It will stop working immediately for this user.")) return;
+          try {
+            await api("/admin/keys/" + btn.dataset.keyId, { method: "DELETE" });
+            loadAdminKeys(userId, email);
+          } catch (err) {
+            alert(err.message);
+          }
+        };
+      });
+    } catch (err) {
+      body.innerHTML = `<tr><td colspan="6" class="error">${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
 
   document.querySelectorAll(".settings-nav button").forEach((btn) => {
     btn.onclick = () => showSettingsSection(btn.dataset.settings);
@@ -1094,22 +1240,39 @@
     $("tabSignup").classList.remove("active");
     $("loginForm").style.display = "block";
     $("signupForm").style.display = "none";
+    $("verifyForm").style.display = "none";
   };
   $("tabSignup").onclick = () => {
     $("tabSignup").classList.add("active");
     $("tabLogin").classList.remove("active");
     $("signupForm").style.display = "block";
     $("loginForm").style.display = "none";
+    $("verifyForm").style.display = "none";
   };
+
+  let pendingVerifyEmail = null;
+
+  function showVerifyForm(email) {
+    pendingVerifyEmail = email;
+    $("verifyEmailLabel").textContent = email;
+    $("verifyError").textContent = "";
+    $("verifyMsg").textContent = "";
+    $("loginForm").style.display = "none";
+    $("signupForm").style.display = "none";
+    $("verifyForm").style.display = "block";
+    $("tabLogin").classList.remove("active");
+    $("tabSignup").classList.remove("active");
+  }
 
   $("loginForm").onsubmit = async (e) => {
     e.preventDefault();
     $("loginError").textContent = "";
+    const email = $("loginEmail").value.trim();
     try {
       const data = await api("/auth/login", {
         method: "POST",
         body: JSON.stringify({
-          email: $("loginEmail").value.trim(),
+          email,
           password: $("loginPassword").value,
         }),
       });
@@ -1117,27 +1280,64 @@
       localStorage.setItem("ugajapa_token", token);
       showDash();
     } catch (err) {
-      $("loginError").textContent = err.message;
+      if (err.code === "EMAIL_NOT_VERIFIED") {
+        showVerifyForm(email);
+        $("verifyMsg").textContent = "Your email isn't verified yet. Enter the code we sent, or resend a new one.";
+      } else {
+        $("loginError").textContent = err.message;
+      }
     }
   };
 
   $("signupForm").onsubmit = async (e) => {
     e.preventDefault();
     $("signupError").textContent = "";
+    const email = $("signupEmail").value.trim();
     try {
-      const data = await api("/auth/signup", {
+      await api("/auth/signup", {
         method: "POST",
         body: JSON.stringify({
           full_name: $("signupName").value.trim(),
-          email: $("signupEmail").value.trim(),
+          email,
           password: $("signupPassword").value,
+        }),
+      });
+      showVerifyForm(email);
+    } catch (err) {
+      $("signupError").textContent = err.message;
+    }
+  };
+
+  $("verifyForm").onsubmit = async (e) => {
+    e.preventDefault();
+    $("verifyError").textContent = "";
+    try {
+      const data = await api("/auth/verify", {
+        method: "POST",
+        body: JSON.stringify({
+          email: pendingVerifyEmail,
+          code: $("verifyCode").value.trim(),
         }),
       });
       token = data.token;
       localStorage.setItem("ugajapa_token", token);
       showDash();
     } catch (err) {
-      $("signupError").textContent = err.message;
+      $("verifyError").textContent = err.message;
+    }
+  };
+
+  $("resendCodeBtn").onclick = async () => {
+    $("verifyError").textContent = "";
+    $("verifyMsg").textContent = "";
+    try {
+      const data = await api("/auth/verify/resend", {
+        method: "POST",
+        body: JSON.stringify({ email: pendingVerifyEmail }),
+      });
+      $("verifyMsg").textContent = data.message || "Code resent.";
+    } catch (err) {
+      $("verifyError").textContent = err.message;
     }
   };
 
@@ -1383,6 +1583,11 @@ curl ${base}/languages -s \\
 
   async function loadAll() {
     try {
+      await applyRoleView();
+      if (isAdminAccount) {
+        await loadAdminUsers();
+        return;
+      }
       await Promise.all([
         loadEngines(),
         loadUsage(),

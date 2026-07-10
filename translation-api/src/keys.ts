@@ -113,6 +113,56 @@ export async function revokeKey(req: Request, res: Response): Promise<void> {
   res.json({ message: "API key revoked", key_id });
 }
 
+/** Admin — list every key (active and revoked) for a given user. */
+export async function adminListUserKeys(req: Request, res: Response): Promise<void> {
+  const { user_id } = req.params;
+
+  const result = await query<{
+    id: string;
+    name: string;
+    key_prefix: string;
+    created_at: Date;
+    last_used: Date | null;
+    revoked_at: Date | null;
+  }>(
+    `SELECT id, name, key_prefix, created_at, last_used, revoked_at
+     FROM api_keys WHERE user_id = $1
+     ORDER BY created_at DESC`,
+    [user_id]
+  );
+
+  res.json({
+    user_id,
+    keys: result.rows.map((k) => ({
+      key_id: k.id,
+      name: k.name,
+      key_value: `${k.key_prefix}${"*".repeat(12)}`,
+      created_at: k.created_at.toISOString(),
+      last_used: k.last_used?.toISOString() ?? null,
+      revoked: k.revoked_at !== null,
+    })),
+  });
+}
+
+/** Admin — revoke (deactivate) any user's key by id. Does not delete the row. */
+export async function adminRevokeKey(req: Request, res: Response): Promise<void> {
+  const { key_id } = req.params;
+
+  const result = await query<{ id: string; user_id: string }>(
+    `UPDATE api_keys SET revoked_at = NOW()
+     WHERE id = $1 AND revoked_at IS NULL
+     RETURNING id, user_id`,
+    [key_id]
+  );
+
+  if (!result.rowCount) {
+    res.status(404).json({ error: "Key not found or already revoked" });
+    return;
+  }
+
+  res.json({ message: "API key revoked", key_id, user_id: result.rows[0].user_id });
+}
+
 export async function requireApiKey(
   req: Request,
   res: Response,

@@ -8,12 +8,45 @@ export async function ensureSchema(): Promise<void> {
   const check = await query<{ users: string | null }>(
     "SELECT to_regclass('public.users') AS users"
   );
-  if (check.rows[0]?.users) return;
+  if (!check.rows[0]?.users) {
+    const schemaPath = path.join(__dirname, "..", "sql", "schema.sql");
+    const sql = fs.readFileSync(schemaPath, "utf8");
+    await pool.query(sql);
+    console.log("Database schema applied.");
+  }
 
-  const schemaPath = path.join(__dirname, "..", "sql", "schema.sql");
-  const sql = fs.readFileSync(schemaPath, "utf8");
-  await pool.query(sql);
-  console.log("Database schema applied.");
+  await applyMigrations();
+}
+
+/**
+ * Idempotent, additive migrations — safe to run on every boot, including
+ * against an already-live database (e.g. the deployed Render instance).
+ * Existing accounts are grandfathered as verified so this change can't
+ * lock out anyone who signed up before email verification existed.
+ */
+async function applyMigrations(): Promise<void> {
+  await pool.query(`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_code VARCHAR(10);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_code_expires_at TIMESTAMPTZ;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_code_sent_at TIMESTAMPTZ;
+
+    -- No FK on user_id: it may reference either users or admins (two
+    -- separate tables), and a failed login has no valid id to point to.
+    CREATE TABLE IF NOT EXISTS login_events (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID,
+      email VARCHAR(255) NOT NULL,
+      success BOOLEAN NOT NULL,
+      reason VARCHAR(64),
+      ip_address VARCHAR(64),
+      user_agent TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    ALTER TABLE login_events DROP CONSTRAINT IF EXISTS login_events_user_id_fkey;
+    CREATE INDEX IF NOT EXISTS idx_login_events_user ON login_events(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_login_events_created ON login_events(created_at DESC);
+  `);
 }
 
 /**

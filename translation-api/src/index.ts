@@ -3,8 +3,25 @@ import express, { NextFunction, Request, RequestHandler, Response } from "expres
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 import multer from "multer";
-import { signup, login, logout, me, requireAuth, requireAdmin } from "./auth";
-import { generateKey, listKeys, revokeKey, requireApiKey } from "./keys";
+import {
+  signup,
+  login,
+  logout,
+  me,
+  verifyEmail,
+  resendVerificationCode,
+  requireAuth,
+  requireAdmin,
+} from "./auth";
+import { adminLoginActivity, adminUserLoginActivity } from "./login_tracking";
+import {
+  generateKey,
+  listKeys,
+  revokeKey,
+  requireApiKey,
+  adminListUserKeys,
+  adminRevokeKey,
+} from "./keys";
 import {
   translateHandler,
   detectHandler,
@@ -47,6 +64,11 @@ import {
 const PORT = parseInt(process.env.PORT || "5000", 10);
 const app = express();
 
+// Render (and most PaaS hosts) sit behind a reverse proxy — without this,
+// req.ip always resolves to the proxy's internal address, not the real
+// client IP, which breaks both rate limiting and login/session tracking.
+app.set("trust proxy", 1);
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_MEDIA_BYTES },
@@ -78,6 +100,15 @@ const translateLimiter = rateLimit({
     return (Array.isArray(key) ? key[0] : key) || req.ip || "unknown";
   },
   message: { error: "Rate limit exceeded — max 10 requests/second per API key" },
+});
+
+// Throttle auth endpoints per IP to slow down credential stuffing / brute force.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many attempts — please wait a few minutes and try again" },
 });
 
 app.get(
@@ -113,8 +144,10 @@ app.get(
 );
 
 // Auth
-app.post("/auth/signup", asyncHandler(signup));
-app.post("/auth/login", asyncHandler(login));
+app.post("/auth/signup", authLimiter, asyncHandler(signup));
+app.post("/auth/verify", authLimiter, asyncHandler(verifyEmail));
+app.post("/auth/verify/resend", authLimiter, asyncHandler(resendVerificationCode));
+app.post("/auth/login", authLimiter, asyncHandler(login));
 app.post("/auth/logout", asyncHandler(requireAuth), asyncHandler(logout));
 app.get("/auth/me", asyncHandler(requireAuth), asyncHandler(me));
 
@@ -206,6 +239,22 @@ app.post(
   "/admin/billing/:user_id/:month/paid",
   asyncHandler(requireAdmin),
   asyncHandler(adminMarkBillPaid)
+);
+app.get("/admin/logins", asyncHandler(requireAdmin), asyncHandler(adminLoginActivity));
+app.get(
+  "/admin/users/:user_id/keys",
+  asyncHandler(requireAdmin),
+  asyncHandler(adminListUserKeys)
+);
+app.delete(
+  "/admin/keys/:key_id",
+  asyncHandler(requireAdmin),
+  asyncHandler(adminRevokeKey)
+);
+app.get(
+  "/admin/users/:user_id/logins",
+  asyncHandler(requireAdmin),
+  asyncHandler(adminUserLoginActivity)
 );
 app.delete(
   "/admin/users/:id",
