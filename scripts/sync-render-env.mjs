@@ -26,6 +26,9 @@ const SYNC_KEYS = [
   "GOOGLE_API_KEY",
   "ADMIN_EMAIL",
   "ADMIN_PASSWORD",
+  "RESEND_API_KEY",
+  "GMAIL_USER",
+  "GMAIL_APP_PASSWORD",
 ];
 
 function parseEnvFile(filePath) {

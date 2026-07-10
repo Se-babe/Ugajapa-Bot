@@ -7,16 +7,11 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 const RESEND_FROM_EMAIL =
   process.env.RESEND_FROM_EMAIL || "UgaJapa Connect <onboarding@resend.dev>";
 
-type Provider = "gmail" | "resend" | "none";
-
-function activeProvider(): Provider {
-  if (GMAIL_USER && GMAIL_APP_PASSWORD) return "gmail";
-  if (RESEND_API_KEY) return "resend";
-  return "none";
-}
+const gmailAvailable = Boolean(GMAIL_USER && GMAIL_APP_PASSWORD);
+const resendAvailable = Boolean(RESEND_API_KEY);
 
 export function isEmailConfigured(): boolean {
-  return activeProvider() !== "none";
+  return gmailAvailable || resendAvailable;
 }
 
 let gmailTransport: Transporter | null = null;
@@ -25,6 +20,12 @@ function getGmailTransport(): Transporter {
     gmailTransport = nodemailer.createTransport({
       service: "gmail",
       auth: { user: GMAIL_USER, pass: GMAIL_APP_PASSWORD },
+      // Some PaaS hosts (e.g. Render) block outbound SMTP entirely for
+      // anti-abuse reasons — without these, a blocked connection hangs the
+      // request indefinitely instead of failing fast so we can fall back.
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 10_000,
     });
   }
   return gmailTransport;
@@ -74,27 +75,44 @@ async function sendViaResend(to: string, code: string): Promise<void> {
 
 /**
  * Sends the verification code by email. Tries Gmail SMTP first (if
- * GMAIL_USER/GMAIL_APP_PASSWORD are set), then Resend (if RESEND_API_KEY is
- * set). In non-production environments with neither configured, falls back
- * to logging the code to the console — useful for local development. In
- * production, a missing provider is a hard error: silently "succeeding"
- * without actually notifying the real inbox owner would defeat the point
- * of verification.
+ * configured), and falls through to Resend (if configured) if Gmail fails
+ * or times out — some hosts block outbound SMTP entirely, so a working
+ * fallback matters, not just a priority order. In non-production
+ * environments with neither configured, falls back to logging the code to
+ * the console. In production, if every configured provider fails, that's a
+ * hard error: silently "succeeding" without actually notifying the real
+ * inbox owner would defeat the point of verification.
  */
 export async function sendVerificationEmail(
   to: string,
   code: string
 ): Promise<void> {
-  const provider = activeProvider();
+  const errors: string[] = [];
 
-  if (provider === "gmail") {
-    await sendViaGmail(to, code);
-    return;
+  if (gmailAvailable) {
+    try {
+      await sendViaGmail(to, code);
+      return;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[mailer] Gmail SMTP failed, trying next provider: ${msg}`);
+      errors.push(`gmail: ${msg}`);
+    }
   }
 
-  if (provider === "resend") {
-    await sendViaResend(to, code);
-    return;
+  if (resendAvailable) {
+    try {
+      await sendViaResend(to, code);
+      return;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[mailer] Resend failed: ${msg}`);
+      errors.push(`resend: ${msg}`);
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`All configured email providers failed — ${errors.join("; ")}`);
   }
 
   if (process.env.NODE_ENV === "production") {
