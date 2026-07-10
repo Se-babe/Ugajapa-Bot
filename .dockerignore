@@ -1,0 +1,10 @@
+.env
+**/.env
+**/node_modules
+**/dist
+**/.venv
+**/__pycache__
+ugajapa-bot
+*.log
+.git
+render.deploy.yaml
