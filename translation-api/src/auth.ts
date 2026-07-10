@@ -261,6 +261,51 @@ export async function login(req: Request, res: Response): Promise<void> {
   });
 }
 
+export async function me(req: Request, res: Response): Promise<void> {
+  if (!req.user) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  if (req.user.isAdmin) {
+    res.json({
+      id: req.user.id,
+      email: req.user.email,
+      full_name: req.user.full_name,
+      plan: req.user.plan,
+      role: "admin",
+      created_at: null,
+    });
+    return;
+  }
+
+  const result = await query<{
+    id: string;
+    email: string;
+    full_name: string;
+    plan: string;
+    created_at: Date;
+  }>(
+    "SELECT id, email, full_name, plan, created_at FROM users WHERE id = $1",
+    [req.user.id]
+  );
+
+  const user = result.rows[0];
+  if (!user) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+
+  res.json({
+    id: user.id,
+    email: user.email,
+    full_name: user.full_name,
+    plan: user.plan,
+    role: "user",
+    created_at: user.created_at,
+  });
+}
+
 export async function logout(req: Request, res: Response): Promise<void> {
   if (req.jti) {
     await query(

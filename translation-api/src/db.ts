@@ -10,6 +10,11 @@ export const pool = new Pool({
   idleTimeoutMillis: 30_000,
 });
 
+// Prevent an idle client disconnect from crashing the whole API process.
+pool.on("error", (err) => {
+  console.error("Unexpected database pool error:", err);
+});
+
 export async function query<T extends QueryResultRow = QueryResultRow>(
   text: string,
   params?: unknown[]

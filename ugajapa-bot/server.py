@@ -1,20 +1,13 @@
-"""UgaJapa Bot ù NLLB-200 translation engine (internal only, port 8000)."""
+"""UgaJapa Bot ‚Äî NLLB-200 translation engine (internal only, port 8000)."""
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from transformers import pipeline
 import torch
 
-app = FastAPI(title="UgaJapa Translation Bot")
+from nllb_langs import LANG_CODES, resolve_nllb_code
 
-LANG_CODES = {
-    "en": "eng_Latn",   # English
-    "ja": "jpn_Jpan",   # Japanese
-    "lg": "lug_Latn",   # Luganda
-    "fr": "fra_Latn",   # French
-    "sw": "swh_Latn",   # Swahili
-    "ach": "ach_Latn",  # Acholi
-}
+app = FastAPI(title="UgaJapa Translation Bot")
 
 MODEL_NAME = "facebook/nllb-200-distilled-600M"
 
@@ -53,10 +46,16 @@ def translate(req: TranslateRequest):
     if req.from_lang == req.to_lang:
         return {"translated": req.text, "engine": "none"}
 
-    if req.from_lang not in LANG_CODES:
-        raise HTTPException(status_code=400, detail=f"Unsupported from_lang: {req.from_lang}")
-    if req.to_lang not in LANG_CODES:
-        raise HTTPException(status_code=400, detail=f"Unsupported to_lang: {req.to_lang}")
+    src = resolve_nllb_code(req.from_lang)
+    tgt = resolve_nllb_code(req.to_lang)
+    if not src:
+        raise HTTPException(
+            status_code=400, detail=f"Unsupported from_lang: {req.from_lang}"
+        )
+    if not tgt:
+        raise HTTPException(
+            status_code=400, detail=f"Unsupported to_lang: {req.to_lang}"
+        )
 
     if not req.text or not req.text.strip():
         raise HTTPException(status_code=400, detail="text must not be empty")
@@ -64,8 +63,8 @@ def translate(req: TranslateRequest):
     try:
         result = get_translator()(
             req.text,
-            src_lang=LANG_CODES[req.from_lang],
-            tgt_lang=LANG_CODES[req.to_lang],
+            src_lang=src,
+            tgt_lang=tgt,
             max_length=512,
         )
         return {

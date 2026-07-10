@@ -2,12 +2,13 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: ugajapa-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-mmuser}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mmuser_password}
       POSTGRES_DB: ${POSTGRES_DB:-ugajapa_api}
     ports:
-      - "5432:5432"
+      - "5434:5432"
     volumes:
       - ugajapa_pgdata:/var/lib/postgresql/data
       - ./translation-api/sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
@@ -20,6 +21,7 @@ services:
   ugajapa-bot:
     build: ./ugajapa-bot
     container_name: ugajapa-bot
+    restart: unless-stopped
     ports:
       - "8000:8000"
     # Bot stays reachable on localhost for local plugin testing;
@@ -36,17 +38,15 @@ services:
   translation-api:
     build: ./translation-api
     container_name: ugajapa-translation-api
+    restart: unless-stopped
     ports:
       - "5000:5000"
+    env_file:
+      - ./translation-api/.env
     environment:
       PORT: 5000
       DATABASE_URL: postgresql://${POSTGRES_USER:-mmuser}:${POSTGRES_PASSWORD:-mmuser_password}@postgres:5432/${POSTGRES_DB:-ugajapa_api}
-      JWT_SECRET: ${JWT_SECRET:-your-very-long-random-secret-here}
       BOT_URL: http://ugajapa-bot:8000
-      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
-      SUNBIRD_API_URL: ${SUNBIRD_API_URL:-https://api.sunbird.ai/translate}
-      SUNBIRD_API_KEY: ${SUNBIRD_API_KEY:-}
-      BILLING_CRON_SECRET: ${BILLING_CRON_SECRET:-another-random-secret}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@ugajapa.ac.ug}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-ChangeMeAdmin123!}
     depends_on:

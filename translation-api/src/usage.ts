@@ -7,12 +7,24 @@ export const PLAN_LIMITS: Record<string, number> = {
 
 export const PLAN_PRICES: Record<
   string,
-  { base: number; overagePer10k: number }
+  { base: number; overagePer10k: number; label: string }
 > = {
-  free: { base: 0, overagePer10k: 0 },
-  starter: { base: 9, overagePer10k: 0.5 },
-  business: { base: 49, overagePer10k: 0.3 },
-  enterprise: { base: 0, overagePer10k: 0 },
+  free: { base: 0, overagePer10k: 0, label: "Free" },
+  starter: { base: 9, overagePer10k: 0.5, label: "Starter" },
+  business: { base: 49, overagePer10k: 0.3, label: "Business" },
+  enterprise: { base: 0, overagePer10k: 0, label: "Enterprise" },
+};
+
+export const PLAN_ORDER = ["free", "starter", "business", "enterprise"] as const;
+
+export type BillingBreakdown = {
+  plan: string;
+  characters_total: number;
+  included_characters: number;
+  overage_characters: number;
+  base_usd: number;
+  overage_usd: number;
+  total_usd: number;
 };
 
 export function countCharacters(text: string): number {
@@ -23,16 +35,56 @@ export function getPlanLimit(plan: string): number {
   return PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
 }
 
+export function getBillingBreakdown(
+  plan: string,
+  charactersTotal: number
+): BillingBreakdown {
+  const pricing = PLAN_PRICES[plan] ?? PLAN_PRICES.free;
+  const limit = getPlanLimit(plan);
+
+  if (plan === "enterprise") {
+    return {
+      plan,
+      characters_total: charactersTotal,
+      included_characters: charactersTotal,
+      overage_characters: 0,
+      base_usd: 0,
+      overage_usd: 0,
+      total_usd: 0,
+    };
+  }
+
+  if (plan === "free") {
+    return {
+      plan,
+      characters_total: charactersTotal,
+      included_characters: Math.min(charactersTotal, limit),
+      overage_characters: Math.max(0, charactersTotal - limit),
+      base_usd: 0,
+      overage_usd: 0,
+      total_usd: 0,
+    };
+  }
+
+  const overage = Math.max(0, charactersTotal - limit);
+  const overageBlocks = Math.ceil(overage / 10_000);
+  const overage_usd = Number((overageBlocks * pricing.overagePer10k).toFixed(2));
+  const base_usd = pricing.base;
+
+  return {
+    plan,
+    characters_total: charactersTotal,
+    included_characters: Math.min(charactersTotal, limit),
+    overage_characters: overage,
+    base_usd,
+    overage_usd,
+    total_usd: Number((base_usd + overage_usd).toFixed(2)),
+  };
+}
+
 export function calculateBill(
   plan: string,
   charactersTotal: number
 ): number {
-  const pricing = PLAN_PRICES[plan] ?? PLAN_PRICES.free;
-  if (plan === "enterprise") return 0;
-  if (plan === "free") return 0;
-
-  const limit = getPlanLimit(plan);
-  const overage = Math.max(0, charactersTotal - limit);
-  const overageBlocks = Math.ceil(overage / 10_000);
-  return Number((pricing.base + overageBlocks * pricing.overagePer10k).toFixed(2));
+  return getBillingBreakdown(plan, charactersTotal).total_usd;
 }

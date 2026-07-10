@@ -82,6 +82,10 @@ curl -s -X POST http://localhost:5000/translate \
 | DELETE | `/keys/:key_id` | JWT |
 | POST | `/translate` | X-API-Key |
 | POST | `/detect` | X-API-Key |
+| POST | `/transcribe` | X-API-Key |
+| POST | `/synthesize` | X-API-Key |
+| POST | `/audio/translate` | X-API-Key |
+| POST | `/video/translate` | X-API-Key |
 | GET | `/languages` | X-API-Key |
 | GET | `/health` | — |
 | GET | `/usage/summary` | JWT |
@@ -92,13 +96,26 @@ curl -s -X POST http://localhost:5000/translate \
 
 ## Engine routing
 
-| Pair | Primary | Fallback |
-|------|---------|----------|
-| EN ↔ JA | UgaJapa Bot | Google (if configured & quality Low) |
-| EN ↔ LG | Sunbird AI | UgaJapa Bot |
-| JA ↔ LG | EN pivot | UgaJapa Bot direct |
-| EN ↔ ACH | UgaJapa Bot | Sunbird |
-| Other | UgaJapa Bot | — |
+Three-tier routing (see `src/router.ts`) — UgaJapa Bot (NLLB-200) is the universal last-resort fallback in every tier:
+
+| Tier | Language pair | Primary | Fallback | Last resort |
+|------|---------------|---------|----------|--------------|
+| 1 | Ugandan languages (lg, ach, nyn, teo), either side | Groq | — | UgaJapa Bot |
+| 2 | Japanese, either side | Groq | Google | UgaJapa Bot |
+| 3 | Everything else | Google | Groq | UgaJapa Bot |
+
+## Voice / STT / TTS
+
+Mattermost voice notes call these endpoints on the same Translation API URL:
+
+| Endpoint | Purpose | Engines |
+|----------|---------|---------|
+| `POST /transcribe` | Audio → text + detected language | Ugandan langs → Groq Whisper; EN/JA/others → Google Speech; cross-fallback |
+| `POST /audio/translate` | Transcribe + translate audio file | STT + translation router |
+| `POST /video/translate` | Transcribe + translate video + SRT subtitles | Groq verbose_json segments when available |
+| `POST /synthesize` | Text → MP3 read-aloud | Google Text-to-Speech |
+
+Configure `GROQ_API_KEY` (Whisper) and `GOOGLE_API_KEY` (Speech + TTS). Optional overrides: `GOOGLE_SPEECH_API_KEY`, `GOOGLE_TTS_API_KEY`.
 
 ## Plans
 

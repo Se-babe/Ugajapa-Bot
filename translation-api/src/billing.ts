@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import cron from "node-cron";
 import { query } from "./db";
-import { calculateBill, getPlanLimit, PLAN_LIMITS } from "./usage";
+import { getBillingBreakdown, getPlanLimit, PLAN_LIMITS, PLAN_ORDER, PLAN_PRICES, type BillingBreakdown } from "./usage";
 
 export async function usageSummary(req: Request, res: Response): Promise<void> {
   if (!req.user) {
@@ -20,6 +20,7 @@ export async function usageSummary(req: Request, res: Response): Promise<void> {
 
   const used = parseInt(result.rows[0].total, 10);
   const limit = getPlanLimit(req.user.plan);
+  const billing = getBillingBreakdown(req.user.plan, used);
 
   res.json({
     month: new Date().toISOString().slice(0, 7),
@@ -28,6 +29,15 @@ export async function usageSummary(req: Request, res: Response): Promise<void> {
     characters_limit: limit === Number.MAX_SAFE_INTEGER ? null : limit,
     remaining: limit === Number.MAX_SAFE_INTEGER ? null : Math.max(0, limit - used),
     quota_exceeded: used >= limit,
+    estimated_bill_usd: billing.total_usd,
+    billing,
+    plans: Object.entries(PLAN_PRICES).map(([code, p]) => ({
+      code,
+      label: p.label,
+      monthly_base_usd: p.base,
+      overage_per_10k_usd: p.overagePer10k,
+      character_limit: PLAN_LIMITS[code] === Number.MAX_SAFE_INTEGER ? null : PLAN_LIMITS[code],
+    })),
   });
 }
 
@@ -91,12 +101,14 @@ export async function getBillingMonth(req: Request, res: Response): Promise<void
   }
 
   const row = bill.rows[0];
+  const characters_total = parseInt(row.characters_total, 10);
   res.json({
     month: row.month,
-    characters_total: parseInt(row.characters_total, 10),
+    characters_total,
     plan: req.user.plan,
     amount_usd: parseFloat(row.amount_usd),
     paid: row.paid,
+    billing: getBillingBreakdown(req.user.plan, characters_total),
   });
 }
 
@@ -139,6 +151,7 @@ async function computeUserBill(
   plan: string;
   amount_usd: number;
   paid: boolean;
+  billing: BillingBreakdown;
 }> {
   const [y, m] = month.split("-").map(Number);
   const start = new Date(Date.UTC(y, m - 1, 1));
@@ -152,9 +165,16 @@ async function computeUserBill(
   );
 
   const characters_total = parseInt(result.rows[0].total, 10);
-  const amount_usd = calculateBill(plan, characters_total);
+  const billing = getBillingBreakdown(plan, characters_total);
 
-  return { month, characters_total, plan, amount_usd, paid: false };
+  return {
+    month,
+    characters_total,
+    plan,
+    amount_usd: billing.total_usd,
+    paid: false,
+    billing,
+  };
 }
 
 export async function runMonthlyBilling(forMonth?: string): Promise<number> {
@@ -187,15 +207,101 @@ export async function runMonthlyBilling(forMonth?: string): Promise<number> {
 }
 
 export function startBillingCron(): void {
-  // 1st of each month at 00:05 UTC
+  // 1st of each month at 00:05 UTC — finalize previous month
   cron.schedule("5 0 1 * *", async () => {
     try {
       const n = await runMonthlyBilling();
-      console.log(`[billing] Generated ${n} bills`);
+      console.log(`[billing] Generated ${n} monthly bills`);
     } catch (err) {
-      console.error("[billing] cron failed:", err);
+      console.error("[billing] monthly cron failed:", err);
     }
   });
+
+  // Daily at 02:00 UTC — refresh current-month estimates for all active users
+  cron.schedule("0 2 * * *", async () => {
+    try {
+      const month = new Date().toISOString().slice(0, 7);
+      const n = await runMonthlyBilling(month);
+      console.log(`[billing] Refreshed ${n} current-month estimates`);
+    } catch (err) {
+      console.error("[billing] daily snapshot failed:", err);
+    }
+  });
+}
+
+/** Self-service plan upgrade (upgrade only — no downgrades). */
+export async function upgradePlan(req: Request, res: Response): Promise<void> {
+  if (!req.user) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  const { plan } = req.body as { plan?: string };
+  const allowed = ["starter", "business"];
+  if (!plan || !allowed.includes(plan)) {
+    res.status(400).json({
+      error: `plan must be one of: ${allowed.join(", ")}`,
+      hint: "Contact support@ugajapa.ac.ug for Enterprise",
+    });
+    return;
+  }
+
+  const currentIdx = PLAN_ORDER.indexOf(
+    req.user.plan as (typeof PLAN_ORDER)[number]
+  );
+  const newIdx = PLAN_ORDER.indexOf(plan as (typeof PLAN_ORDER)[number]);
+  if (newIdx <= currentIdx) {
+    res.status(400).json({
+      error: "You can only upgrade to a higher plan",
+      current_plan: req.user.plan,
+    });
+    return;
+  }
+
+  const result = await query<{ id: string; email: string; plan: string }>(
+    "UPDATE users SET plan = $1 WHERE id = $2 RETURNING id, email, plan",
+    [plan, req.user.id]
+  );
+
+  if (!result.rows[0]) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+
+  res.json({
+    message: `Plan upgraded to ${plan}`,
+    plan: result.rows[0].plan,
+    billing_note:
+      "Your new plan limits apply immediately. Monthly charges are calculated from usage at month end.",
+  });
+}
+
+export async function adminMarkBillPaid(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const userId = String(req.params.user_id);
+  const month = String(req.params.month || "");
+  const { paid } = req.body as { paid?: boolean };
+
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    res.status(400).json({ error: "month must be YYYY-MM" });
+    return;
+  }
+
+  const result = await query(
+    `UPDATE billing SET paid = $1
+     WHERE user_id = $2 AND month = $3
+     RETURNING user_id, month, amount_usd, paid`,
+    [paid !== false, userId, month]
+  );
+
+  if (!result.rowCount) {
+    res.status(404).json({ error: "Bill not found — run billing generation first" });
+    return;
+  }
+
+  res.json({ message: "Bill updated", bill: result.rows[0] });
 }
 
 // --- Admin handlers ---

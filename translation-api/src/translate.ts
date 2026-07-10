@@ -1,86 +1,19 @@
 import { Request, Response } from "express";
 import { query } from "./db";
-import { routeTranslate, googleFallback } from "./router";
-import { botLanguages } from "./ugajapa-bot";
+import {
+  detectLanguage,
+  getLanguagesResponse,
+  isSupportedLanguage,
+  normalizeTranslationCode,
+} from "./languages";
+import { evaluateTranslationQuality } from "./quality_eval";
+import { routeTranslate } from "./router";
 import { countCharacters, getPlanLimit } from "./usage";
 
-export type QualityResult = {
-  levenshtein: number;
-  semantic: number;
-  label: "Good" | "Fair" | "Low";
-  color: "green" | "amber" | "red";
-};
+const BACK_TRANSLATION_ENABLED =
+  process.env.BACK_TRANSLATION_ENABLED === "true";
 
-function levenshteinDistance(a: string, b: string): number {
-  const m = a.length;
-  const n = b.length;
-  if (m === 0) return n;
-  if (n === 0) return m;
-
-  const prev = new Array<number>(n + 1);
-  const curr = new Array<number>(n + 1);
-  for (let j = 0; j <= n; j++) prev[j] = j;
-
-  for (let i = 1; i <= m; i++) {
-    curr[0] = i;
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
-    }
-    for (let j = 0; j <= n; j++) prev[j] = curr[j];
-  }
-  return prev[n];
-}
-
-function levenshteinScore(original: string, reversed: string): number {
-  const a = original.toLowerCase().trim();
-  const b = reversed.toLowerCase().trim();
-  if (a.length === 0 && b.length === 0) return 1;
-  const dist = levenshteinDistance(a, b);
-  const maxLen = Math.max(a.length, b.length);
-  return Number((1 - dist / maxLen).toFixed(3));
-}
-
-function tokenize(text: string): Set<string> {
-  return new Set(
-    text
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}\s]/gu, " ")
-      .split(/\s+/)
-      .filter(Boolean)
-  );
-}
-
-/** Word-overlap F1 as a lightweight semantic similarity proxy. */
-function semanticScore(original: string, reversed: string): number {
-  const a = tokenize(original);
-  const b = tokenize(reversed);
-  if (a.size === 0 && b.size === 0) return 1;
-  if (a.size === 0 || b.size === 0) return 0;
-
-  let overlap = 0;
-  for (const t of a) {
-    if (b.has(t)) overlap++;
-  }
-  const precision = overlap / b.size;
-  const recall = overlap / a.size;
-  if (precision + recall === 0) return 0;
-  return Number(((2 * precision * recall) / (precision + recall)).toFixed(3));
-}
-
-function qualityLabel(score: number): Pick<QualityResult, "label" | "color"> {
-  if (score >= 0.7) return { label: "Good", color: "green" };
-  if (score >= 0.4) return { label: "Fair", color: "amber" };
-  return { label: "Low", color: "red" };
-}
-
-export function scoreQuality(original: string, reversed: string): QualityResult {
-  const lev = levenshteinScore(original, reversed);
-  const sem = semanticScore(original, reversed);
-  const combined = (lev + sem) / 2;
-  const { label, color } = qualityLabel(combined);
-  return { levenshtein: lev, semantic: sem, label, color };
-}
+export type { QualityResult } from "./quality_eval";
 
 async function getMonthlyUsage(userId: string): Promise<number> {
   const result = await query<{ total: string }>(
@@ -100,14 +33,42 @@ export async function translateHandler(req: Request, res: Response): Promise<voi
     return;
   }
 
-  const { text, from, to } = req.body as {
+  const { text, from: fromInput, to } = req.body as {
     text?: string;
     from?: string;
     to?: string;
   };
 
-  if (!text || !from || !to) {
-    res.status(400).json({ error: "text, from, and to are required" });
+  if (!text || !to) {
+    res.status(400).json({ error: "text and to are required" });
+    return;
+  }
+
+  // A missing/empty "from" means the caller wants source-language auto-detection.
+  let from = fromInput?.trim() || "";
+  let detectedFrom: string | undefined;
+  if (!from) {
+    const detected = await detectLanguage(text);
+    detectedFrom = detected.language;
+    from = detected.language;
+  }
+
+  const toNorm = normalizeTranslationCode(to);
+  const fromNorm = normalizeTranslationCode(from);
+
+  if (!(await isSupportedLanguage(toNorm))) {
+    res.status(400).json({
+      error: `Unsupported target language: ${to}`,
+      hint: "Call GET /languages for the full global language list",
+    });
+    return;
+  }
+
+  if (fromNorm && !(await isSupportedLanguage(fromNorm))) {
+    res.status(400).json({
+      error: `Unsupported source language: ${from}`,
+      hint: "Call GET /languages for the full global language list",
+    });
     return;
   }
 
@@ -127,33 +88,26 @@ export async function translateHandler(req: Request, res: Response): Promise<voi
   }
 
   try {
-    let result = await routeTranslate(text, from, to);
+    const result = await routeTranslate(text, fromNorm || from, toNorm);
 
-    // Back-translation for quality scoring
+    // Back-translation is optional — disabled by default to avoid doubling engine calls.
     let reversed = text;
-    if (from !== to && result.engine !== "none") {
-      const back = await routeTranslate(result.translated, to, from);
+    if (
+      BACK_TRANSLATION_ENABLED &&
+      fromNorm !== toNorm &&
+      result.engine !== "none"
+    ) {
+      const back = await routeTranslate(result.translated, toNorm, fromNorm || from);
       reversed = back.translated;
     }
 
-    let quality = scoreQuality(text, reversed);
-
-    // Optional Google fallback for low confidence on EN↔JA (and similar)
-    if (
-      quality.label === "Low" &&
-      ((from === "en" && to === "ja") || (from === "ja" && to === "en"))
-    ) {
-      const fallback = await googleFallback(text, from, to);
-      if (fallback) {
-        const back = await routeTranslate(fallback.translated, to, from);
-        const q2 = scoreQuality(text, back.translated);
-        if (q2.levenshtein >= quality.levenshtein) {
-          result = fallback;
-          reversed = back.translated;
-          quality = q2;
-        }
-      }
-    }
+    const quality = await evaluateTranslationQuality(
+      text,
+      result.translated,
+      fromNorm || from,
+      toNorm,
+      reversed
+    );
 
     await query(
       `INSERT INTO usage_records
@@ -163,10 +117,10 @@ export async function translateHandler(req: Request, res: Response): Promise<voi
         req.apiKey.keyId,
         req.apiKey.userId,
         characters,
-        from,
-        to,
+        fromNorm || from,
+        toNorm,
         result.engine,
-        quality.levenshtein,
+        quality.overall,
       ]
     );
 
@@ -174,10 +128,18 @@ export async function translateHandler(req: Request, res: Response): Promise<voi
       origin: text,
       translated: result.translated,
       reversed,
-      from,
-      to,
-      engine: result.engine,
+      from: fromNorm || from,
+      to: toNorm,
+      detected_from: detectedFrom ?? null,
+      engine: "ugajapa-bot",
       quality,
+      score: quality.score,
+      semantic_score: quality.semantic_score,
+      embedding_score: quality.semantic_score,
+      quality_score: quality.overall,
+      review_passed: quality.passed,
+      review_reason: quality.review_reason,
+      cached: result.cached === true,
       characters_used: characters,
       cultural_hint: null,
     });
@@ -190,7 +152,6 @@ export async function translateHandler(req: Request, res: Response): Promise<voi
   }
 }
 
-/** Simple heuristic language detection. */
 export async function detectHandler(req: Request, res: Response): Promise<void> {
   const { text } = req.body as { text?: string };
   if (!text) {
@@ -198,53 +159,47 @@ export async function detectHandler(req: Request, res: Response): Promise<void> 
     return;
   }
 
-  const sample = text.trim();
-  let language = "en";
-  let confidence = 0.5;
-
-  if (/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/.test(sample)) {
-    language = "ja";
-    confidence = 0.9;
-  } else if (
-    /\b(wasuze|otyano|bulungi|webale|ssente|omuntu|nno)\b/i.test(sample)
-  ) {
-    language = "lg";
-    confidence = 0.75;
-  } else if (/\b(bonjour|merci|aujourd|français|oui|non)\b/i.test(sample)) {
-    language = "fr";
-    confidence = 0.7;
-  } else if (/\b(habari|asante|karibu|jambo|sana)\b/i.test(sample)) {
-    language = "sw";
-    confidence = 0.7;
-  } else if (/^[A-Za-z0-9\s.,!?'"-]+$/.test(sample)) {
-    language = "en";
-    confidence = 0.65;
-  }
-
-  res.json({ language, confidence, text: sample });
+  const { language, confidence } = await detectLanguage(text);
+  res.json({ language, confidence, text: text.trim() });
 }
 
 export async function languagesHandler(
   _req: Request,
   res: Response
 ): Promise<void> {
-  const langs = await botLanguages();
-  res.json({
-    languages: langs.map((code) => ({
-      code,
-      name:
-        (
-          {
-            en: "English",
-            ja: "Japanese",
-            lg: "Luganda",
-            fr: "French",
-            sw: "Swahili",
-            ach: "Acholi",
-            nyn: "Runyankole",
-            teo: "Ateso",
-          } as Record<string, string>
-        )[code] || code,
-    })),
-  });
+  res.json(await getLanguagesResponse());
+}
+
+/** JWT-authenticated playground translate (uses user's latest active API key). */
+export async function dashboardTranslateHandler(
+  req: Request,
+  res: Response
+): Promise<void> {
+  if (!req.user) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  const keyResult = await query<{ id: string; name: string }>(
+    `SELECT id, name FROM api_keys
+     WHERE user_id = $1 AND revoked_at IS NULL
+     ORDER BY created_at DESC LIMIT 1`,
+    [req.user.id]
+  );
+  const key = keyResult.rows[0];
+  if (!key) {
+    res.status(400).json({
+      error: "Generate an API key first to use the translation playground",
+    });
+    return;
+  }
+
+  req.apiKey = {
+    keyId: key.id,
+    userId: req.user.id,
+    plan: req.user.plan,
+    name: key.name,
+  };
+
+  return translateHandler(req, res);
 }

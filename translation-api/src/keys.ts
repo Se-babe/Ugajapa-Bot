@@ -32,6 +32,12 @@ export async function generateKey(req: Request, res: Response): Promise<void> {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
+  if (req.user.isAdmin) {
+    res.status(403).json({
+      error: "Admin accounts cannot generate customer API keys. Sign up a regular user account instead.",
+    });
+    return;
+  }
 
   const keyValue = generateKeyValue(env);
   const keyHash = await bcrypt.hash(keyValue, 12);

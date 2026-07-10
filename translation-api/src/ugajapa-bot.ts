@@ -35,10 +35,16 @@ export async function botTranslate(
 }
 
 export async function botLanguages(): Promise<string[]> {
-  const res = await fetch(`${BOT_URL}/languages`, {
-    signal: AbortSignal.timeout(5000),
-  });
-  if (!res.ok) return ["en", "ja", "lg", "fr", "sw", "ach"];
-  const data = (await res.json()) as { languages: string[] };
-  return data.languages;
+  try {
+    const res = await fetch(`${BOT_URL}/languages`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) throw new Error(`Bot languages error ${res.status}`);
+    const data = (await res.json()) as { languages: string[] };
+    return data.languages;
+  } catch {
+    const { getSupportedLanguages } = await import("./languages");
+    const langs = await getSupportedLanguages();
+    return langs.map((l) => l.code);
+  }
 }
