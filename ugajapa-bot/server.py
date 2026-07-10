@@ -1,4 +1,4 @@
-"""UgaJapa Bot ù NLLB-200 translation engine (internal only, port 8000)."""
+"""UgaJapa Bot - NLLB-200 translation engine (internal only, port 8000)."""
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel

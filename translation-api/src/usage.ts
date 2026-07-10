@@ -1,3 +1,6 @@
+import { Request, Response } from "express";
+import { query } from "./db";
+
 export const PLAN_LIMITS: Record<string, number> = {
   free: 50_000,
   starter: 500_000,
@@ -21,6 +24,37 @@ export function countCharacters(text: string): number {
 
 export function getPlanLimit(plan: string): number {
   return PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
+}
+
+export async function apiKeyUsage(req: Request, res: Response): Promise<void> {
+  if (!req.apiKey) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  const result = await query<{ total: string }>(
+    `SELECT COALESCE(SUM(characters), 0)::text AS total
+     FROM usage_records
+     WHERE user_id = $1
+       AND timestamp >= date_trunc('month', NOW())
+       AND timestamp < date_trunc('month', NOW()) + INTERVAL '1 month'`,
+    [req.apiKey.userId]
+  );
+
+  const used = parseInt(result.rows[0].total, 10);
+  const limit = getPlanLimit(req.apiKey.plan);
+
+  res.json({
+    period: new Date().toISOString().slice(0, 7),
+    plan: req.apiKey.plan,
+    usage: {
+      sourceCharacters: used,
+      billedCharacters: used,
+      limit: limit === Number.MAX_SAFE_INTEGER ? null : limit,
+      remaining: limit === Number.MAX_SAFE_INTEGER ? null : Math.max(0, limit - used),
+    },
+    quotaExceeded: used >= limit,
+  });
 }
 
 export function calculateBill(

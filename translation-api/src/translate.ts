@@ -1,193 +1,135 @@
 import { Request, Response } from "express";
-import { query } from "./db";
-import { routeTranslate, googleFallback } from "./router";
 import { botLanguages } from "./ugajapa-bot";
-import { countCharacters, getPlanLimit } from "./usage";
+import {
+  checkQuota,
+  deliverTranslation,
+  evaluateTranslation,
+  fullTranslation,
+  recordUsage,
+  toPluginResponse,
+  toV1Response,
+  type TranslateInput,
+} from "./translate-core";
 
-export type QualityResult = {
-  levenshtein: number;
-  semantic: number;
-  label: "Good" | "Fair" | "Low";
-  color: "green" | "amber" | "red";
-};
-
-function levenshteinDistance(a: string, b: string): number {
-  const m = a.length;
-  const n = b.length;
-  if (m === 0) return n;
-  if (n === 0) return m;
-
-  const prev = new Array<number>(n + 1);
-  const curr = new Array<number>(n + 1);
-  for (let j = 0; j <= n; j++) prev[j] = j;
-
-  for (let i = 1; i <= m; i++) {
-    curr[0] = i;
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
-    }
-    for (let j = 0; j <= n; j++) prev[j] = curr[j];
-  }
-  return prev[n];
-}
-
-function levenshteinScore(original: string, reversed: string): number {
-  const a = original.toLowerCase().trim();
-  const b = reversed.toLowerCase().trim();
-  if (a.length === 0 && b.length === 0) return 1;
-  const dist = levenshteinDistance(a, b);
-  const maxLen = Math.max(a.length, b.length);
-  return Number((1 - dist / maxLen).toFixed(3));
-}
-
-function tokenize(text: string): Set<string> {
-  return new Set(
-    text
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}\s]/gu, " ")
-      .split(/\s+/)
-      .filter(Boolean)
-  );
-}
-
-/** Word-overlap F1 as a lightweight semantic similarity proxy. */
-function semanticScore(original: string, reversed: string): number {
-  const a = tokenize(original);
-  const b = tokenize(reversed);
-  if (a.size === 0 && b.size === 0) return 1;
-  if (a.size === 0 || b.size === 0) return 0;
-
-  let overlap = 0;
-  for (const t of a) {
-    if (b.has(t)) overlap++;
-  }
-  const precision = overlap / b.size;
-  const recall = overlap / a.size;
-  if (precision + recall === 0) return 0;
-  return Number(((2 * precision * recall) / (precision + recall)).toFixed(3));
-}
-
-function qualityLabel(score: number): Pick<QualityResult, "label" | "color"> {
-  if (score >= 0.7) return { label: "Good", color: "green" };
-  if (score >= 0.4) return { label: "Fair", color: "amber" };
-  return { label: "Low", color: "red" };
-}
-
-export function scoreQuality(original: string, reversed: string): QualityResult {
-  const lev = levenshteinScore(original, reversed);
-  const sem = semanticScore(original, reversed);
-  const combined = (lev + sem) / 2;
-  const { label, color } = qualityLabel(combined);
-  return { levenshtein: lev, semantic: sem, label, color };
-}
-
-async function getMonthlyUsage(userId: string): Promise<number> {
-  const result = await query<{ total: string }>(
-    `SELECT COALESCE(SUM(characters), 0)::text AS total
-     FROM usage_records
-     WHERE user_id = $1
-       AND timestamp >= date_trunc('month', NOW())
-       AND timestamp < date_trunc('month', NOW()) + INTERVAL '1 month'`,
-    [userId]
-  );
-  return parseInt(result.rows[0].total, 10);
-}
-
-export async function translateHandler(req: Request, res: Response): Promise<void> {
+async function handleTranslate(
+  req: Request,
+  res: Response,
+  mode: "full" | "deliver" | "evaluate" | "v1"
+): Promise<void> {
   if (!req.apiKey) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
 
-  const { text, from, to } = req.body as {
-    text?: string;
-    from?: string;
-    to?: string;
-  };
-
-  if (!text || !from || !to) {
-    res.status(400).json({ error: "text, from, and to are required" });
-    return;
-  }
-
-  const characters = countCharacters(text);
-  const limit = getPlanLimit(req.apiKey.plan);
-  const used = await getMonthlyUsage(req.apiKey.userId);
-
-  if (used + characters > limit) {
-    res.status(429).json({
-      error: "Monthly quota exceeded",
-      used,
-      limit,
-      plan: req.apiKey.plan,
-      upgrade_url: "https://api.ugajapa.ac.ug/upgrade",
-    });
-    return;
-  }
+  const body = req.body as TranslateInput;
 
   try {
-    let result = await routeTranslate(text, from, to);
-
-    // Back-translation for quality scoring
-    let reversed = text;
-    if (from !== to && result.engine !== "none") {
-      const back = await routeTranslate(result.translated, to, from);
-      reversed = back.translated;
-    }
-
-    let quality = scoreQuality(text, reversed);
-
-    // Optional Google fallback for low confidence on EN↔JA (and similar)
-    if (
-      quality.label === "Low" &&
-      ((from === "en" && to === "ja") || (from === "ja" && to === "en"))
-    ) {
-      const fallback = await googleFallback(text, from, to);
-      if (fallback) {
-        const back = await routeTranslate(fallback.translated, to, from);
-        const q2 = scoreQuality(text, back.translated);
-        if (q2.levenshtein >= quality.levenshtein) {
-          result = fallback;
-          reversed = back.translated;
-          quality = q2;
+    if (mode !== "evaluate") {
+      const text = body.text?.trim() || body.origin?.trim();
+      if (text) {
+        const characters = [...text].length;
+        const quota = await checkQuota(
+          req.apiKey.userId,
+          req.apiKey.plan,
+          characters
+        );
+        if (!quota.ok) {
+          res.status(429).json({
+            error: "Monthly quota exceeded",
+            used: quota.used,
+            limit: quota.limit,
+            plan: req.apiKey.plan,
+            upgrade_url: "https://api.ugajapa.ac.ug/upgrade",
+          });
+          return;
         }
       }
     }
 
-    await query(
-      `INSERT INTO usage_records
-         (api_key_id, user_id, characters, from_lang, to_lang, engine, quality_score)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [
-        req.apiKey.keyId,
-        req.apiKey.userId,
-        characters,
-        from,
-        to,
-        result.engine,
-        quality.levenshtein,
-      ]
-    );
+    let output;
+    let meterCharacters = 0;
 
-    res.json({
-      origin: text,
-      translated: result.translated,
-      reversed,
-      from,
-      to,
-      engine: result.engine,
-      quality,
-      characters_used: characters,
-      cultural_hint: null,
-    });
+    if (mode === "deliver") {
+      output = await deliverTranslation(body);
+      meterCharacters = output.characters;
+    } else if (mode === "evaluate") {
+      output = await evaluateTranslation(body);
+      meterCharacters = 0;
+      await recordUsage(req.apiKey.keyId, req.apiKey.userId, {
+        ...output,
+        characters: 0,
+      });
+    } else if (body.fast) {
+      output = await fullTranslation({ ...body, fast: true });
+      meterCharacters = output.characters;
+    } else {
+      output = await fullTranslation(body);
+      meterCharacters = output.characters;
+    }
+
+    if (meterCharacters > 0) {
+      await recordUsage(req.apiKey.keyId, req.apiKey.userId, output);
+    }
+
+    if (mode === "v1") {
+      res.json(toV1Response(output));
+      return;
+    }
+
+    res.json(toPluginResponse(output));
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (
+      message.includes("required") ||
+      message.includes("must be")
+    ) {
+      res.status(400).json({ error: message });
+      return;
+    }
     console.error("Translation error:", err);
     res.status(502).json({
       error: "Translation engine unavailable",
-      detail: err instanceof Error ? err.message : String(err),
+      detail: message,
     });
   }
+}
+
+export async function translateHandler(req: Request, res: Response): Promise<void> {
+  await handleTranslate(req, res, "full");
+}
+
+export async function deliverHandler(req: Request, res: Response): Promise<void> {
+  await handleTranslate(req, res, "deliver");
+}
+
+export async function evaluateHandler(req: Request, res: Response): Promise<void> {
+  await handleTranslate(req, res, "evaluate");
+}
+
+export async function v1TranslateHandler(req: Request, res: Response): Promise<void> {
+  const body = req.body as TranslateInput & {
+    sourceLang?: string;
+    targetLang?: string;
+    text?: string;
+  };
+
+  const normalized: TranslateInput = {
+    text: body.text,
+    from: body.from || body.sourceLang,
+    to: body.to || body.targetLang,
+    fast: body.fast,
+    hint_language: body.hint_language,
+  };
+
+  if (!normalized.text || !normalized.from || !normalized.to) {
+    res.status(400).json({
+      error: "text, from/sourceLang, and to/targetLang are required",
+    });
+    return;
+  }
+
+  req.body = normalized;
+  await handleTranslate(req, res, "v1");
 }
 
 /** Simple heuristic language detection. */
@@ -229,22 +171,28 @@ export async function languagesHandler(
   res: Response
 ): Promise<void> {
   const langs = await botLanguages();
+  const names: Record<string, string> = {
+    en: "English",
+    ja: "Japanese",
+    lg: "Luganda",
+    fr: "French",
+    sw: "Swahili",
+    ach: "Acholi",
+    nyn: "Runyankole",
+    teo: "Ateso",
+  };
+
   res.json({
     languages: langs.map((code) => ({
       code,
-      name:
-        (
-          {
-            en: "English",
-            ja: "Japanese",
-            lg: "Luganda",
-            fr: "French",
-            sw: "Swahili",
-            ach: "Acholi",
-            nyn: "Runyankole",
-            teo: "Ateso",
-          } as Record<string, string>
-        )[code] || code,
+      name: names[code] || code,
     })),
   });
+}
+
+export async function v1LanguagesHandler(
+  req: Request,
+  res: Response
+): Promise<void> {
+  await languagesHandler(req, res);
 }

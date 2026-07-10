@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mmuser_password}
       POSTGRES_DB: ${POSTGRES_DB:-ugajapa_api}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - ugajapa_pgdata:/var/lib/postgresql/data
       - ./translation-api/sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
@@ -18,12 +18,12 @@ services:
       retries: 10
 
   ugajapa-bot:
+    profiles: ["bot", "full"]
     build: ./ugajapa-bot
     container_name: ugajapa-bot
     ports:
-      - "8000:8000"
-    # Bot stays reachable on localhost for local plugin testing;
-    # do not expose 8000 publicly in production.
+      - "${BOT_PORT:-8001}:8000"
+    # Host port 8001 by default (8000 often used by Coolify). Internal port stays 8000.
     volumes:
       - ugajapa_model_cache:/root/.cache/huggingface
     healthcheck:
@@ -38,6 +38,8 @@ services:
     container_name: ugajapa-translation-api
     ports:
       - "5000:5000"
+    volumes:
+      - ./translation-api/public:/app/public:ro
     environment:
       PORT: 5000
       DATABASE_URL: postgresql://${POSTGRES_USER:-mmuser}:${POSTGRES_PASSWORD:-mmuser_password}@postgres:5432/${POSTGRES_DB:-ugajapa_api}
@@ -49,11 +51,15 @@ services:
       BILLING_CRON_SECRET: ${BILLING_CRON_SECRET:-another-random-secret}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@ugajapa.ac.ug}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-ChangeMeAdmin123!}
+      PORTAL_URL: ${PORTAL_URL:-http://localhost:5000}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_STARTER: ${STRIPE_PRICE_STARTER:-}
+      STRIPE_PRICE_BUSINESS: ${STRIPE_PRICE_BUSINESS:-}
     depends_on:
       postgres:
         condition: service_healthy
-      ugajapa-bot:
-        condition: service_started
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s

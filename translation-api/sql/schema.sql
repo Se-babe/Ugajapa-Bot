@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash VARCHAR(255) NOT NULL,
   full_name VARCHAR(255) NOT NULL,
   plan VARCHAR(50) NOT NULL DEFAULT 'free',
+  stripe_customer_id VARCHAR(255),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   active BOOLEAN NOT NULL DEFAULT TRUE,
   CONSTRAINT users_plan_check CHECK (plan IN ('free', 'starter', 'business', 'enterprise'))
@@ -36,8 +37,22 @@ CREATE TABLE IF NOT EXISTS usage_records (
   to_lang VARCHAR(16) NOT NULL,
   engine VARCHAR(64) NOT NULL,
   quality_score DECIMAL(4,3),
+  request_id VARCHAR(64) UNIQUE,
   timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS translation_feedback (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_id VARCHAR(64) NOT NULL,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  api_key_id UUID NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+  rating SMALLINT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  comment TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (request_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_request ON translation_feedback(request_id);
 
 CREATE INDEX IF NOT EXISTS idx_usage_user_month ON usage_records(user_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_usage_key ON usage_records(api_key_id);
@@ -49,6 +64,8 @@ CREATE TABLE IF NOT EXISTS billing (
   characters_total BIGINT NOT NULL DEFAULT 0,
   amount_usd DECIMAL(10,2) NOT NULL DEFAULT 0,
   paid BOOLEAN NOT NULL DEFAULT FALSE,
+  stripe_session_id VARCHAR(255),
+  stripe_payment_intent_id VARCHAR(255),
   generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (user_id, month)
 );

@@ -19,8 +19,23 @@ declare global {
 }
 
 function generateKeyValue(env: "live" | "test" = "live"): string {
-  const random = crypto.randomBytes(24).toString("base64url");
-  return `ugj_${env}_${random}`;
+  const segments = [
+    crypto.randomBytes(4).toString("hex"),
+    crypto.randomBytes(4).toString("hex"),
+    crypto.randomBytes(4).toString("hex"),
+  ];
+  return `ugj_${env}_${segments.join("-")}`;
+}
+
+/** Mask stored key for display: ugj_live_a1b2c3d4-••••-••••-•••••••• */
+export function maskKeyPreview(prefix: string): string {
+  const base = prefix.replace(/-+$/, "");
+  if (base.startsWith("ugj_live_") || base.startsWith("ugj_test_")) {
+    const env = base.startsWith("ugj_live_") ? "live" : "test";
+    const visible = base.slice(`ugj_${env}_`.length).slice(0, 8) || "••••";
+    return `ugj_${env}_${visible}-••••-••••-••••••••`;
+  }
+  return `${base}${"•".repeat(Math.max(0, 20 - base.length))}`;
 }
 
 export async function generateKey(req: Request, res: Response): Promise<void> {
@@ -35,7 +50,7 @@ export async function generateKey(req: Request, res: Response): Promise<void> {
 
   const keyValue = generateKeyValue(env);
   const keyHash = await bcrypt.hash(keyValue, 12);
-  const keyPrefix = keyValue.slice(0, 16);
+  const keyPrefix = keyValue.slice(0, 20);
 
   const result = await query<{ id: string; created_at: Date }>(
     `INSERT INTO api_keys (user_id, key_hash, key_prefix, name)
@@ -47,9 +62,13 @@ export async function generateKey(req: Request, res: Response): Promise<void> {
   const row = result.rows[0];
   res.status(201).json({
     key_id: row.id,
+    key: keyValue,
     key_value: keyValue,
+    key_preview: maskKeyPreview(keyPrefix),
     name,
+    env,
     created_at: row.created_at.toISOString(),
+    message: "Copy this key now — it will not be shown again.",
   });
 }
 
@@ -77,7 +96,9 @@ export async function listKeys(req: Request, res: Response): Promise<void> {
     keys: result.rows.map((k) => ({
       key_id: k.id,
       name: k.name,
-      key_value: `${k.key_prefix}${"*".repeat(12)}`,
+      key_preview: maskKeyPreview(k.key_prefix),
+      key_value: maskKeyPreview(k.key_prefix),
+      env: k.key_prefix.includes("ugj_test_") ? "test" : "live",
       created_at: k.created_at.toISOString(),
       last_used: k.last_used?.toISOString() ?? null,
       revoked: k.revoked_at !== null,
@@ -112,15 +133,29 @@ export async function requireApiKey(
   res: Response,
   next: NextFunction
 ): Promise<void> {
-  const rawKey = req.headers["x-api-key"];
-  const keyValue = Array.isArray(rawKey) ? rawKey[0] : rawKey;
+  let keyValue: string | undefined;
+
+  const headerKey = req.headers["x-api-key"];
+  if (headerKey) {
+    keyValue = Array.isArray(headerKey) ? headerKey[0] : headerKey;
+  }
+
+  if (!keyValue) {
+    const auth = req.headers.authorization;
+    if (auth?.startsWith("Bearer ")) {
+      const bearer = auth.slice(7);
+      if (bearer.startsWith("ugj_live_") || bearer.startsWith("ugj_test_")) {
+        keyValue = bearer;
+      }
+    }
+  }
 
   if (!keyValue || (!keyValue.startsWith("ugj_live_") && !keyValue.startsWith("ugj_test_"))) {
-    res.status(401).json({ error: "Missing or invalid X-API-Key header" });
+    res.status(401).json({ error: "Missing or invalid API key (X-API-Key or Bearer)" });
     return;
   }
 
-  const prefix = keyValue.slice(0, 16);
+  const prefix = keyValue.slice(0, 20);
   const candidates = await query<{
     id: string;
     user_id: string;

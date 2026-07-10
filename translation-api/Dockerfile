@@ -7,6 +7,7 @@ RUN npm install
 
 COPY tsconfig.json ./
 COPY sql ./sql
+COPY public ./public
 COPY src ./src
 
 RUN npx tsc

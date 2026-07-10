@@ -261,6 +261,21 @@ export async function login(req: Request, res: Response): Promise<void> {
   });
 }
 
+export async function getMe(req: Request, res: Response): Promise<void> {
+  if (!req.user) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  res.json({
+    user_id: req.user.id,
+    email: req.user.email,
+    full_name: req.user.full_name,
+    plan: req.user.plan,
+    is_admin: req.user.isAdmin || false,
+  });
+}
+
 export async function logout(req: Request, res: Response): Promise<void> {
   if (req.jti) {
     await query(
