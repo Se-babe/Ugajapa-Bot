@@ -19,5 +19,5 @@ COPY server.py nllb_langs.py .
 
 EXPOSE 8000
 
-# Pre-download can still happen on first /health after start; keep CMD simple.
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
+# Render sets PORT dynamically; model loads lazily on first translate request.
+CMD ["sh", "-c", "uvicorn server:app --host 0.0.0.0 --port ${PORT:-8000}"]

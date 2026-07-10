@@ -29,7 +29,7 @@ import {
 } from "./billing";
 import { botHealth } from "./ugajapa-bot";
 import { pool } from "./db";
-import { seedAdmin, waitForDb } from "./seed";
+import { ensureSchema, seedAdmin, waitForDb } from "./seed";
 import { getSpeechEngine } from "./stt";
 import { isGoogleSpeechEnabled } from "./google_speech";
 import { isGoogleTTSEnabled } from "./google_tts";
@@ -231,8 +231,9 @@ app.use(
 
 async function start() {
   await waitForDb();
+  await ensureSchema();
   await seedAdmin();
-  app.listen(PORT, () => {
+  app.listen(PORT, "0.0.0.0", () => {
     console.log(`UgaJapa Translation API listening on port ${PORT}`);
     startBillingCron();
   });

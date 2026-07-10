@@ -31,14 +31,13 @@ class TranslateRequest(BaseModel):
     to_lang: str
 
 
-@app.on_event("startup")
-def load_model():
-    get_translator()
-
-
 @app.get("/health")
 def health():
-    return {"status": "ok", "engine": MODEL_NAME.split("/")[-1]}
+    return {
+        "status": "ok",
+        "engine": MODEL_NAME.split("/")[-1],
+        "model_loaded": translator is not None,
+    }
 
 
 @app.post("/translate")

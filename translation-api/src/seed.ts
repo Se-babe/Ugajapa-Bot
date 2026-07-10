@@ -1,5 +1,20 @@
+import fs from "fs";
+import path from "path";
 import bcrypt from "bcryptjs";
 import { pool, query } from "./db";
+
+/** Apply schema.sql on first deploy (e.g. Render) when tables are missing. */
+export async function ensureSchema(): Promise<void> {
+  const check = await query<{ users: string | null }>(
+    "SELECT to_regclass('public.users') AS users"
+  );
+  if (check.rows[0]?.users) return;
+
+  const schemaPath = path.join(__dirname, "..", "sql", "schema.sql");
+  const sql = fs.readFileSync(schemaPath, "utf8");
+  await pool.query(sql);
+  console.log("Database schema applied.");
+}
 
 /**
  * Ensure a seed admin account exists (from ADMIN_EMAIL / ADMIN_PASSWORD).

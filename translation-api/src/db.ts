@@ -4,10 +4,16 @@ const DATABASE_URL =
   process.env.DATABASE_URL ||
   "postgresql://mmuser:mmuser_password@localhost:5432/ugajapa_api";
 
+const needsSsl =
+  process.env.DATABASE_SSL === "true" ||
+  process.env.NODE_ENV === "production" ||
+  /render\.com|sslmode=require/i.test(DATABASE_URL);
+
 export const pool = new Pool({
   connectionString: DATABASE_URL,
   max: 20,
   idleTimeoutMillis: 30_000,
+  ssl: needsSsl ? { rejectUnauthorized: false } : undefined,
 });
 
 // Prevent an idle client disconnect from crashing the whole API process.
