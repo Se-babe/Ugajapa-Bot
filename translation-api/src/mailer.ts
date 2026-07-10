@@ -10,6 +10,17 @@ const RESEND_FROM_EMAIL =
 const gmailAvailable = Boolean(GMAIL_USER && GMAIL_APP_PASSWORD);
 const resendAvailable = Boolean(RESEND_API_KEY);
 
+// TEMPORARY relay mode: while no domain is verified with Resend and Gmail
+// SMTP is blocked outbound on Render, real verification codes can only be
+// delivered to one address (the Resend account owner / Gmail sender). Set
+// VERIFICATION_RELAY_EMAIL to that address to route every code there
+// instead of to each signer's own inbox — the admin manually shares the
+// code out-of-band. This intentionally weakens verification (it no longer
+// proves the signer owns the email they entered) and is meant to be
+// removed the moment a domain is verified: unset this var and delivery
+// reverts automatically to each user's own address.
+const RELAY_EMAIL = process.env.VERIFICATION_RELAY_EMAIL?.trim() || "";
+
 export function isEmailConfigured(): boolean {
   return gmailAvailable || resendAvailable;
 }
@@ -31,27 +42,44 @@ function getGmailTransport(): Transporter {
   return gmailTransport;
 }
 
-function verificationEmailHtml(code: string): string {
+function verificationEmailHtml(code: string, forEmail: string, relaying: boolean): string {
+  const relayNote = relaying
+    ? `<p style="background:#fffbe6;border:1px solid #f0d878;border-radius:6px;padding:10px 14px;color:#8a6d1a;font-size:13px;">` +
+      `This code is for a signup from <strong>${forEmail}</strong> — share it with them to let them verify.</p>`
+    : "";
   return (
     `<div style="font-family:sans-serif;max-width:420px;margin:0 auto;">` +
     `<h2 style="color:#1e3a5f;">Verify your email</h2>` +
-    `<p>Use this code to finish creating your UgaJapa Connect account:</p>` +
+    relayNote +
+    `<p>Use this code to finish creating the UgaJapa Connect account:</p>` +
     `<p style="font-size:32px;font-weight:700;letter-spacing:6px;color:#1e3a5f;">${code}</p>` +
     `<p style="color:#6b7785;font-size:13px;">This code expires in 15 minutes. If you didn't request this, you can ignore this email.</p>` +
     `</div>`
   );
 }
 
-async function sendViaGmail(to: string, code: string): Promise<void> {
+async function sendViaGmail(
+  sendTo: string,
+  code: string,
+  forEmail: string,
+  relaying: boolean
+): Promise<void> {
   await getGmailTransport().sendMail({
     from: `UgaJapa Connect <${GMAIL_USER}>`,
-    to,
-    subject: "Your UgaJapa Connect verification code",
-    html: verificationEmailHtml(code),
+    to: sendTo,
+    subject: relaying
+      ? `Verification code for ${forEmail}`
+      : "Your UgaJapa Connect verification code",
+    html: verificationEmailHtml(code, forEmail, relaying),
   });
 }
 
-async function sendViaResend(to: string, code: string): Promise<void> {
+async function sendViaResend(
+  sendTo: string,
+  code: string,
+  forEmail: string,
+  relaying: boolean
+): Promise<void> {
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -60,9 +88,11 @@ async function sendViaResend(to: string, code: string): Promise<void> {
     },
     body: JSON.stringify({
       from: RESEND_FROM_EMAIL,
-      to,
-      subject: "Your UgaJapa Connect verification code",
-      html: verificationEmailHtml(code),
+      to: sendTo,
+      subject: relaying
+        ? `Verification code for ${forEmail}`
+        : "Your UgaJapa Connect verification code",
+      html: verificationEmailHtml(code, forEmail, relaying),
     }),
     signal: AbortSignal.timeout(15_000),
   });
@@ -82,16 +112,21 @@ async function sendViaResend(to: string, code: string): Promise<void> {
  * the console. In production, if every configured provider fails, that's a
  * hard error: silently "succeeding" without actually notifying the real
  * inbox owner would defeat the point of verification.
+ *
+ * If VERIFICATION_RELAY_EMAIL is set, every code is sent there instead of
+ * to `userEmail` — see the comment on RELAY_EMAIL above.
  */
 export async function sendVerificationEmail(
-  to: string,
+  userEmail: string,
   code: string
 ): Promise<void> {
+  const relaying = Boolean(RELAY_EMAIL);
+  const sendTo = relaying ? RELAY_EMAIL : userEmail;
   const errors: string[] = [];
 
   if (gmailAvailable) {
     try {
-      await sendViaGmail(to, code);
+      await sendViaGmail(sendTo, code, userEmail, relaying);
       return;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -102,7 +137,7 @@ export async function sendVerificationEmail(
 
   if (resendAvailable) {
     try {
-      await sendViaResend(to, code);
+      await sendViaResend(sendTo, code, userEmail, relaying);
       return;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -120,5 +155,5 @@ export async function sendVerificationEmail(
       "No email provider configured (GMAIL_USER/GMAIL_APP_PASSWORD or RESEND_API_KEY) — cannot send verification emails"
     );
   }
-  console.log(`[dev] Verification code for ${to}: ${code}`);
+  console.log(`[dev] Verification code for ${userEmail}: ${code}`);
 }
