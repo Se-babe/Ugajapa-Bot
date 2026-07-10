@@ -1,5 +1,12 @@
 import { Pool, QueryResult, QueryResultRow } from "pg";
 
+if (process.env.NODE_ENV === "production" && !process.env.DATABASE_URL) {
+  throw new Error(
+    "DATABASE_URL is required in production. On Render: create a Postgres database, " +
+      "then add its Internal Database URL to this service's Environment."
+  );
+}
+
 const DATABASE_URL =
   process.env.DATABASE_URL ||
   "postgresql://mmuser:mmuser_password@localhost:5432/ugajapa_api";
