@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mmuser_password}
       POSTGRES_DB: ${POSTGRES_DB:-ugajapa_api}
     ports:
-      - "5434:5432"
+      - "${POSTGRES_PORT:-5434}:5432"
     volumes:
       - ugajapa_pgdata:/var/lib/postgresql/data
       - ./translation-api/sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
@@ -23,9 +23,13 @@ services:
     container_name: ugajapa-bot
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${BOT_PORT:-8000}:8000"
     # Bot stays reachable on localhost for local plugin testing;
-    # do not expose 8000 publicly in production.
+    # do not expose this publicly in production. The host-side port is
+    # configurable (BOT_PORT) in case 8000 conflicts with something else on
+    # the machine — the container's internal port stays 8000 regardless,
+    # since other containers reach it via ugajapa-bot:8000 on the compose
+    # network, not through this host mapping.
     volumes:
       - ugajapa_model_cache:/root/.cache/huggingface
     healthcheck:
@@ -40,7 +44,7 @@ services:
     container_name: ugajapa-translation-api
     restart: unless-stopped
     ports:
-      - "5000:5000"
+      - "${API_PORT:-5000}:5000"
     env_file:
       - ./translation-api/.env
     environment:
@@ -49,7 +53,7 @@ services:
       # every DB connection fail. Render sets its own NODE_ENV=production at
       # the platform level, which takes precedence over this image regardless.
       NODE_ENV: development
-      PORT: 5000
+      PORT: 5000 # container-internal port; change API_PORT above to remap the host side
       DATABASE_URL: postgresql://${POSTGRES_USER:-mmuser}:${POSTGRES_PASSWORD:-mmuser_password}@postgres:5432/${POSTGRES_DB:-ugajapa_api}
       BOT_URL: http://ugajapa-bot:8000
       # ADMIN_EMAIL / ADMIN_PASSWORD intentionally NOT overridden here —
