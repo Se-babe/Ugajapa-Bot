@@ -1,138 +1,157 @@
 import { Request, Response } from "express";
-import { botLanguages } from "./ugajapa-bot";
+import { query } from "./db";
 import {
-  checkQuota,
-  deliverTranslation,
-  evaluateTranslation,
-  fullTranslation,
-  recordUsage,
-  toPluginResponse,
-  toV1Response,
-  type TranslateInput,
-} from "./translate-core";
+  detectLanguage,
+  getLanguagesResponse,
+  isSupportedLanguage,
+  normalizeTranslationCode,
+} from "./languages";
+import { evaluateTranslationQuality } from "./quality_eval";
+import { routeTranslate } from "./router";
+import { countCharacters, getPlanLimit } from "./usage";
 
-async function handleTranslate(
-  req: Request,
-  res: Response,
-  mode: "full" | "deliver" | "evaluate" | "v1"
-): Promise<void> {
+const BACK_TRANSLATION_ENABLED =
+  process.env.BACK_TRANSLATION_ENABLED === "true";
+
+export type { QualityResult } from "./quality_eval";
+
+async function getMonthlyUsage(userId: string): Promise<number> {
+  const result = await query<{ total: string }>(
+    `SELECT COALESCE(SUM(characters), 0)::text AS total
+     FROM usage_records
+     WHERE user_id = $1
+       AND timestamp >= date_trunc('month', NOW())
+       AND timestamp < date_trunc('month', NOW()) + INTERVAL '1 month'`,
+    [userId]
+  );
+  return parseInt(result.rows[0].total, 10);
+}
+
+export async function translateHandler(req: Request, res: Response): Promise<void> {
   if (!req.apiKey) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
 
-  const body = req.body as TranslateInput;
-
-  try {
-    if (mode !== "evaluate") {
-      const text = body.text?.trim() || body.origin?.trim();
-      if (text) {
-        const characters = [...text].length;
-        const quota = await checkQuota(
-          req.apiKey.userId,
-          req.apiKey.plan,
-          characters
-        );
-        if (!quota.ok) {
-          res.status(429).json({
-            error: "Monthly quota exceeded",
-            used: quota.used,
-            limit: quota.limit,
-            plan: req.apiKey.plan,
-            upgrade_url: "https://api.ugajapa.ac.ug/upgrade",
-          });
-          return;
-        }
-      }
-    }
-
-    let output;
-    let meterCharacters = 0;
-
-    if (mode === "deliver") {
-      output = await deliverTranslation(body);
-      meterCharacters = output.characters;
-    } else if (mode === "evaluate") {
-      output = await evaluateTranslation(body);
-      meterCharacters = 0;
-      await recordUsage(req.apiKey.keyId, req.apiKey.userId, {
-        ...output,
-        characters: 0,
-      });
-    } else if (body.fast) {
-      output = await fullTranslation({ ...body, fast: true });
-      meterCharacters = output.characters;
-    } else {
-      output = await fullTranslation(body);
-      meterCharacters = output.characters;
-    }
-
-    if (meterCharacters > 0) {
-      await recordUsage(req.apiKey.keyId, req.apiKey.userId, output);
-    }
-
-    if (mode === "v1") {
-      res.json(toV1Response(output));
-      return;
-    }
-
-    res.json(toPluginResponse(output));
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (
-      message.includes("required") ||
-      message.includes("must be")
-    ) {
-      res.status(400).json({ error: message });
-      return;
-    }
-    console.error("Translation error:", err);
-    res.status(502).json({
-      error: "Translation engine unavailable",
-      detail: message,
-    });
-  }
-}
-
-export async function translateHandler(req: Request, res: Response): Promise<void> {
-  await handleTranslate(req, res, "full");
-}
-
-export async function deliverHandler(req: Request, res: Response): Promise<void> {
-  await handleTranslate(req, res, "deliver");
-}
-
-export async function evaluateHandler(req: Request, res: Response): Promise<void> {
-  await handleTranslate(req, res, "evaluate");
-}
-
-export async function v1TranslateHandler(req: Request, res: Response): Promise<void> {
-  const body = req.body as TranslateInput & {
-    sourceLang?: string;
-    targetLang?: string;
+  const { text, from: fromInput, to } = req.body as {
     text?: string;
+    from?: string;
+    to?: string;
   };
 
-  const normalized: TranslateInput = {
-    text: body.text,
-    from: body.from || body.sourceLang,
-    to: body.to || body.targetLang,
-    fast: body.fast,
-    hint_language: body.hint_language,
-  };
+  if (!text || !to) {
+    res.status(400).json({ error: "text and to are required" });
+    return;
+  }
 
-  if (!normalized.text || !normalized.from || !normalized.to) {
+  // A missing/empty "from" means the caller wants source-language auto-detection.
+  let from = fromInput?.trim() || "";
+  let detectedFrom: string | undefined;
+  if (!from) {
+    const detected = await detectLanguage(text);
+    detectedFrom = detected.language;
+    from = detected.language;
+  }
+
+  const toNorm = normalizeTranslationCode(to);
+  const fromNorm = normalizeTranslationCode(from);
+
+  if (!(await isSupportedLanguage(toNorm))) {
     res.status(400).json({
-      error: "text, from/sourceLang, and to/targetLang are required",
+      error: `Unsupported target language: ${to}`,
+      hint: "Call GET /languages for the full global language list",
     });
     return;
   }
 
-  req.body = normalized;
-  await handleTranslate(req, res, "v1");
+  if (fromNorm && !(await isSupportedLanguage(fromNorm))) {
+    res.status(400).json({
+      error: `Unsupported source language: ${from}`,
+      hint: "Call GET /languages for the full global language list",
+    });
+    return;
+  }
+
+  const characters = countCharacters(text);
+  const limit = getPlanLimit(req.apiKey.plan);
+  const used = await getMonthlyUsage(req.apiKey.userId);
+
+  if (used + characters > limit) {
+    res.status(429).json({
+      error: "Monthly quota exceeded",
+      used,
+      limit,
+      plan: req.apiKey.plan,
+      upgrade_url: "https://api.ugajapa.ac.ug/upgrade",
+    });
+    return;
+  }
+
+  try {
+    const result = await routeTranslate(text, fromNorm || from, toNorm);
+
+    // Back-translation is optional — disabled by default to avoid doubling engine calls.
+    let reversed = text;
+    if (
+      BACK_TRANSLATION_ENABLED &&
+      fromNorm !== toNorm &&
+      result.engine !== "none"
+    ) {
+      const back = await routeTranslate(result.translated, toNorm, fromNorm || from);
+      reversed = back.translated;
+    }
+
+    const quality = await evaluateTranslationQuality(
+      text,
+      result.translated,
+      fromNorm || from,
+      toNorm,
+      reversed
+    );
+
+    await query(
+      `INSERT INTO usage_records
+         (api_key_id, user_id, characters, from_lang, to_lang, engine, quality_score)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        req.apiKey.keyId,
+        req.apiKey.userId,
+        characters,
+        fromNorm || from,
+        toNorm,
+        result.engine,
+        quality.overall,
+      ]
+    );
+
+    res.json({
+      origin: text,
+      translated: result.translated,
+      reversed,
+      from: fromNorm || from,
+      to: toNorm,
+      detected_from: detectedFrom ?? null,
+      engine: "ugajapa-bot",
+      quality,
+      score: quality.score,
+      semantic_score: quality.semantic_score,
+      embedding_score: quality.semantic_score,
+      quality_score: quality.overall,
+      review_passed: quality.passed,
+      review_reason: quality.review_reason,
+      cached: result.cached === true,
+      characters_used: characters,
+      cultural_hint: null,
+    });
+  } catch (err) {
+    console.error("Translation error:", err);
+    res.status(502).json({
+      error: "Translation engine unavailable",
+      detail: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
-/** Simple heuristic language detection. */
 export async function detectHandler(req: Request, res: Response): Promise<void> {
   const { text } = req.body as { text?: string };
   if (!text) {
@@ -140,59 +159,47 @@ export async function detectHandler(req: Request, res: Response): Promise<void> 
     return;
   }
 
-  const sample = text.trim();
-  let language = "en";
-  let confidence = 0.5;
-
-  if (/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/.test(sample)) {
-    language = "ja";
-    confidence = 0.9;
-  } else if (
-    /\b(wasuze|otyano|bulungi|webale|ssente|omuntu|nno)\b/i.test(sample)
-  ) {
-    language = "lg";
-    confidence = 0.75;
-  } else if (/\b(bonjour|merci|aujourd|français|oui|non)\b/i.test(sample)) {
-    language = "fr";
-    confidence = 0.7;
-  } else if (/\b(habari|asante|karibu|jambo|sana)\b/i.test(sample)) {
-    language = "sw";
-    confidence = 0.7;
-  } else if (/^[A-Za-z0-9\s.,!?'"-]+$/.test(sample)) {
-    language = "en";
-    confidence = 0.65;
-  }
-
-  res.json({ language, confidence, text: sample });
+  const { language, confidence } = await detectLanguage(text);
+  res.json({ language, confidence, text: text.trim() });
 }
 
 export async function languagesHandler(
   _req: Request,
   res: Response
 ): Promise<void> {
-  const langs = await botLanguages();
-  const names: Record<string, string> = {
-    en: "English",
-    ja: "Japanese",
-    lg: "Luganda",
-    fr: "French",
-    sw: "Swahili",
-    ach: "Acholi",
-    nyn: "Runyankole",
-    teo: "Ateso",
-  };
-
-  res.json({
-    languages: langs.map((code) => ({
-      code,
-      name: names[code] || code,
-    })),
-  });
+  res.json(await getLanguagesResponse());
 }
 
-export async function v1LanguagesHandler(
+/** JWT-authenticated playground translate (uses user's latest active API key). */
+export async function dashboardTranslateHandler(
   req: Request,
   res: Response
 ): Promise<void> {
-  await languagesHandler(req, res);
+  if (!req.user) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  const keyResult = await query<{ id: string; name: string }>(
+    `SELECT id, name FROM api_keys
+     WHERE user_id = $1 AND revoked_at IS NULL
+     ORDER BY created_at DESC LIMIT 1`,
+    [req.user.id]
+  );
+  const key = keyResult.rows[0];
+  if (!key) {
+    res.status(400).json({
+      error: "Generate an API key first to use the translation playground",
+    });
+    return;
+  }
+
+  req.apiKey = {
+    keyId: key.id,
+    userId: req.user.id,
+    plan: req.user.plan,
+    name: key.name,
+  };
+
+  return translateHandler(req, res);
 }

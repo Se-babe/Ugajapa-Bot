@@ -1,29 +1,1774 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>UgaJapa — Translation API</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/css/app.css" />
-  <script src="https://js.stripe.com/v3/"></script>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>UgaJapa Translation API — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --navy: #1e3a5f;
+    --navy-dark: #16293f;
+    --green: #1a8754;
+    --amber: #b8860b;
+    --red: #c0392b;
+    --accent: #1a8754;
+    --bg: #f4f6f8;
+    --card: #ffffff;
+    --border: #e2e6ea;
+    --text: #1c2530;
+    --muted: #6b7785;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    background: var(--navy);
+    color: #fff;
+    padding: 18px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header .sub { font-size: 12px; color: #c6d3e0; }
+  #logoutBtn { display: none; }
+  main { max-width: 1100px; margin: 0 auto; padding: 28px 20px 60px; }
+  #authView { max-width: 380px; margin: 60px auto; }
+  #dashView { display: none; }
+  body.in-dash main { max-width: none; padding: 0; }
+
+  .dash-shell {
+    display: flex;
+    align-items: stretch;
+    min-height: calc(100vh - 64px);
+  }
+  .dash-sidebar {
+    width: 240px;
+    flex-shrink: 0;
+    background: #1a1f2e;
+    border-right: 1px solid #2a3142;
+    padding: 20px 0 32px;
+    position: sticky;
+    top: 0;
+    align-self: flex-start;
+    height: calc(100vh - 64px);
+    overflow-y: auto;
+  }
+  .dash-sidebar-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: #6b7280;
+    padding: 0 20px 12px;
+    margin: 0;
+  }
+  .nav-back {
+    display: block;
+    width: calc(100% - 24px);
+    margin: 0 12px 16px;
+    text-align: left;
+    background: transparent;
+    color: #9ca3af;
+    border: 1px solid #374151;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .nav-back:hover {
+    color: #fff;
+    background: rgba(255,255,255,.05);
+    border-color: #4b5563;
+  }
+  .dash-nav,
+  .settings-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 0;
+  }
+  .dash-nav button,
+  .settings-nav button {
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    color: #d1d5db;
+    border: 1px solid transparent;
+    border-radius: 0;
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: 400;
+  }
+  .dash-nav button:hover,
+  .settings-nav button:hover {
+    color: #fff;
+    background: rgba(255,255,255,.05);
+  }
+  .dash-nav button.active {
+    color: #fff;
+    background: rgba(255,255,255,.08);
+    border-left: 3px solid var(--accent);
+    padding-left: 17px;
+  }
+  .settings-nav button.active {
+    color: #f97316;
+    border: 1px solid rgba(255,255,255,.35);
+    border-left: 3px solid #f97316;
+    padding-left: 17px;
+    margin: 0 8px;
+    width: calc(100% - 16px);
+    border-radius: 4px;
+  }
+  .dash-content {
+    flex: 1;
+    min-width: 0;
+    padding: 28px 36px 48px;
+    background: var(--bg);
+  }
+  .dash-panel { display: none; }
+  .dash-panel.active { display: block; }
+  .page-header {
+    margin-bottom: 24px;
+  }
+  .page-header h2 {
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--navy);
+    margin: 0 0 6px;
+  }
+  .page-header p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  @media (max-width: 768px) {
+    .dash-shell { flex-direction: column; }
+    .dash-sidebar {
+      width: 100%;
+      height: auto;
+      position: static;
+      padding: 12px 0;
+    }
+    .dash-nav,
+    .settings-nav {
+      flex-direction: row;
+      flex-wrap: wrap;
+      padding: 0 12px;
+      gap: 6px;
+    }
+    .dash-nav button,
+    .settings-nav button {
+      width: auto;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      border: 1px solid transparent;
+    }
+    .dash-nav button.active,
+    .settings-nav button.active {
+      border-left: 1px solid transparent;
+      padding-left: 12px;
+      margin: 0;
+      width: auto;
+    }
+    .dash-sidebar-label,
+    .nav-back { display: none; }
+    .dash-content { padding: 20px 16px 40px; }
+  }
+
+  @media (max-width: 480px) {
+    header { padding: 14px 16px; flex-wrap: wrap; gap: 8px; }
+    header h1 { font-size: 16px; }
+    header .sub { display: none; }
+    #authView { margin: 24px auto; }
+    .card { padding: 16px 14px; }
+    .tabs button { min-width: 80px; font-size: 13px; }
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 22px 24px;
+    margin-bottom: 20px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 16px; color: var(--navy); }
+  .card h3 { font-size: 13px; margin: 0 0 10px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  input, select, textarea {
+    width: 100%;
+    padding: 9px 11px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 14px;
+    margin-bottom: 14px;
+    font-family: inherit;
+  }
+  textarea { min-height: 90px; resize: vertical; }
+  input:focus, select:focus, textarea:focus {
+    outline: 2px solid var(--navy);
+    outline-offset: 0;
+    border-color: transparent;
+  }
+  button {
+    background: var(--navy);
+    color: #fff;
+    border: none;
+    padding: 9px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button:hover { background: var(--navy-dark); }
+  button.secondary { background: transparent; color: var(--navy); border: 1px solid var(--navy); }
+  button.accent { background: var(--accent); }
+  button.accent:hover { background: #157a48; }
+  button.danger { background: transparent; color: var(--red); border: 1px solid var(--red); }
+  button.danger:hover { background: var(--red); color: #fff; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 18px; flex-wrap: wrap; }
+  .tabs button {
+    flex: 1;
+    min-width: 100px;
+    background: transparent;
+    color: var(--navy);
+    border: 1px solid var(--border);
+  }
+  .tabs button.active { background: var(--navy); color: #fff; border-color: var(--navy); }
+  .error { color: var(--red); font-size: 13px; margin: -6px 0 12px; }
+  .msg { color: var(--green); font-size: 13px; margin: -6px 0 12px; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .bar-track { background: var(--border); border-radius: 6px; height: 10px; overflow: hidden; margin-top: 8px; }
+  .bar-fill { background: var(--navy); height: 100%; transition: width .3s; }
+  table { width: 100%; min-width: 480px; border-collapse: collapse; font-size: 13px; display: block; overflow-x: auto; white-space: nowrap; }
+  table thead, table tbody, table tr { display: table; width: 100%; table-layout: fixed; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); white-space: normal; }
+  th { color: var(--muted); font-weight: 500; }
+  code { background: #eef1f4; padding: 2px 6px; border-radius: 4px; font-size: 12.5px; }
+  pre {
+    background: #1a1f2e;
+    color: #e8ecf4;
+    padding: 16px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-size: 12.5px;
+    line-height: 1.5;
+    margin: 0;
+  }
+  .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .badge.active, .badge.up { background: #e6f4ec; color: var(--green); }
+  .badge.revoked, .badge.down { background: #fbe9e7; color: var(--red); }
+  .engine-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  .engine-tile {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    background: #fafbfc;
+  }
+  .engine-tile.featured { border-left: 3px solid var(--accent); }
+  .engine-tile h4 { margin: 0 0 6px; font-size: 14px; color: var(--navy); }
+  .engine-tile p { margin: 0; font-size: 12px; color: var(--muted); }
+  .key-reveal {
+    background: #fffbe6;
+    border: 1px solid #f0d878;
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+    font-size: 13px;
+  }
+  .key-reveal code { display: block; margin: 8px 0; font-size: 13px; word-break: break-all; }
+  .inline-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+  .inline-form > div { flex: 1; min-width: 140px; }
+  .inline-form input, .inline-form select { margin-bottom: 0; }
+  .lang-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 6px;
+    max-height: 320px;
+    overflow-y: auto;
+    margin-top: 12px;
+  }
+  .lang-item {
+    font-size: 12px;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fafbfc;
+  }
+  .lang-item strong { color: var(--navy); }
+  .play-result {
+    background: #f0f7ff;
+    border: 1px solid #c8ddf5;
+    border-radius: 8px;
+    padding: 14px;
+    margin-top: 14px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .play-meta { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 640px) { .two-col { grid-template-columns: 1fr; } }
+  #whoami { font-size: 13px; color: #c6d3e0; }
+  .copy-btn { font-size: 12px; padding: 4px 10px; margin-top: 8px; }
+  .brand-tagline { font-size: 13px; color: var(--muted); margin: 0 0 20px; line-height: 1.5; }
+
+  .settings-section { display: none; }
+  .settings-section.active { display: block; }
+  .settings-field {
+    margin-bottom: 20px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .settings-field:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+  .settings-field label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 6px;
+  }
+  .settings-field .field-value {
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .plan-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 12px;
+    margin-top: 12px;
+  }
+  .plan-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    background: #fafbfc;
+  }
+  .plan-card.current { border-color: var(--navy); background: #f0f4f8; }
+  .plan-card h4 { margin: 0 0 4px; font-size: 14px; color: var(--navy); }
+  .plan-card p { margin: 0; font-size: 12px; color: var(--muted); }
+  .audit-table { margin-top: 12px; }
+  .billing-breakdown {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+    font-size: 13px;
+  }
+  .billing-breakdown .row { padding: 4px 0; }
+  .upgrade-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+    margin-top: 16px;
+  }
+  .upgrade-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    background: #fafbfc;
+  }
+  .upgrade-card.current { border-color: var(--accent); background: #f0faf4; }
+  .upgrade-card h4 { margin: 0 0 6px; font-size: 14px; color: var(--navy); }
+  .upgrade-card .price { font-size: 20px; font-weight: 600; color: var(--navy); margin: 8px 0; }
+  .upgrade-card p { margin: 0 0 12px; font-size: 12px; color: var(--muted); line-height: 1.4; }
+  .quota-warn {
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: #fff8e6;
+    border: 1px solid #f0d878;
+    border-radius: 6px;
+    font-size: 13px;
+    color: #7a5c00;
+  }
+</style>
+<style id="uga-auth-theme">
+  /* Dark split-screen login/signup — scoped to the pre-login view only.
+     The dashboard (body.in-dash) keeps its own light navy/green theme untouched. */
+  body:not(.in-dash) header { display: none; }
+  body:not(.in-dash) { background: #070b12; }
+  body:not(.in-dash)::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 80% 50% at 20% -10%, rgba(99, 102, 241, 0.18), transparent),
+      radial-gradient(ellipse 60% 40% at 90% 10%, rgba(34, 211, 238, 0.1), transparent);
+    pointer-events: none;
+  }
+  body:not(.in-dash) main { max-width: none; padding: 0; position: relative; z-index: 1; }
+
+  body:not(.in-dash) #authView {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr;
+    min-height: 100vh;
+    margin: 0;
+    max-width: none;
+    font-family: "Inter", system-ui, sans-serif;
+  }
+  #authBrand {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 4rem;
+    border-right: 1px solid rgba(148, 163, 184, 0.12);
+    color: #f1f5f9;
+  }
+  #authBrand .logo { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.03em; margin-bottom: 1rem; }
+  #authBrand .logo span {
+    background: linear-gradient(135deg, #22d3ee, #6366f1);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  #authBrand p { color: #94a3b8; max-width: 380px; font-size: 1.05rem; margin: 0; }
+  #authBrand .auth-features { margin-top: 2.5rem; display: grid; gap: 1rem; }
+  #authBrand .auth-feature {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    padding: 1rem;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.12);
+  }
+  #authBrand .auth-feature-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #6366f1, #22d3ee);
+    display: grid;
+    place-items: center;
+    font-size: 1rem;
+    flex-shrink: 0;
+  }
+  #authBrand .auth-feature strong { color: #f1f5f9; display: block; }
+  #authBrand .auth-feature span { color: #94a3b8; font-size: 0.85rem; }
+
+  #authPanel { display: flex; align-items: center; justify-content: center; padding: 2rem; }
+  #authView .card {
+    width: 100%;
+    max-width: 420px;
+    background: #121a28;
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    border-radius: 18px;
+    padding: 2rem;
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+    margin: 0;
+  }
+  #authView .brand-tagline { color: #94a3b8; font-size: 0.9rem; margin: 0 0 1.5rem; }
+  #authView label { color: #94a3b8; font-size: 0.8rem; font-weight: 500; margin-bottom: 0.4rem; }
+  #authView input {
+    width: 100%;
+    padding: 0.75rem 0.9rem;
+    border-radius: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    background: #0d1420;
+    color: #f1f5f9;
+    font: inherit;
+    margin-bottom: 1rem;
+  }
+  #authView input:focus {
+    outline: none;
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.35);
+  }
+  #authView .tabs { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
+  #authView .tabs button {
+    flex: 1;
+    background: transparent;
+    color: #94a3b8;
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    border-radius: 10px;
+    padding: 0.6rem;
+    font-weight: 600;
+    font-size: 0.85rem;
+  }
+  #authView .tabs button.active {
+    background: linear-gradient(135deg, #6366f1, #818cf8);
+    color: #fff;
+    border-color: transparent;
+  }
+  #authView button[type="submit"], #authView button#resendCodeBtn {
+    width: 100%;
+    padding: 0.7rem 1.1rem;
+    border-radius: 10px;
+    border: none;
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+    background: linear-gradient(135deg, #6366f1, #818cf8);
+    color: #fff;
+    box-shadow: 0 8px 24px rgba(99, 102, 241, 0.35);
+  }
+  #authView button#resendCodeBtn {
+    background: transparent;
+    color: #94a3b8;
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    box-shadow: none;
+    margin-top: 0.75rem;
+  }
+  #authView button#resendCodeBtn:hover { color: #f1f5f9; background: #121a28; }
+  #authView .error { color: #f87171; }
+  #authView .msg { color: #34d399; }
+  #authView .muted, #authView p { color: #94a3b8; }
+  #authView strong { color: #f1f5f9; }
+
+  @media (max-width: 1024px) {
+    #authView { grid-template-columns: 1fr; }
+    #authBrand { display: none; }
+  }
+</style>
 </head>
 <body>
-  <script>
-    // Portal runs on port 5000 — redirect if opened on wrong port (e.g. 3000 = Mattermost)
-    if (location.hostname === "localhost" && location.port && location.port !== "5000") {
-      location.replace("http://localhost:5000" + location.pathname + location.search + location.hash);
-    }
-  </script>
-  <div id="app">
-    <div style="display:grid;place-items:center;min-height:100vh;color:#94a3b8;font-family:Inter,system-ui,sans-serif">
-      Loading…
+
+<header>
+  <div>
+    <h1>UgaJapa Translation API</h1>
+    <div class="sub">Global translation platform — built for the world, rooted in Uganda</div>
+  </div>
+  <div class="row">
+    <span id="whoami"></span>
+    <button id="logoutBtn" class="secondary" style="border-color:#fff;color:#fff;">Log out</button>
+  </div>
+</header>
+
+<main>
+
+  <div id="authView">
+    <div id="authBrand">
+      <div class="logo">Uga<span>Japa</span></div>
+      <p>Central Translation API for Mattermost plugins — auth, quality scoring, usage metering, and usage-based billing.</p>
+      <div class="auth-features">
+        <div class="auth-feature">
+          <div class="auth-feature-icon">⚡</div>
+          <div><strong>Per-user API keys</strong><br><span>Secure plugin access with usage tracking</span></div>
+        </div>
+        <div class="auth-feature">
+          <div class="auth-feature-icon">✓</div>
+          <div><strong>Quality in every response</strong><br><span>Server-side evaluation metadata</span></div>
+        </div>
+        <div class="auth-feature">
+          <div class="auth-feature-icon">💳</div>
+          <div><strong>Usage-based billing</strong><br><span>Transparent monthly invoices by plan</span></div>
+        </div>
+      </div>
+    </div>
+    <div id="authPanel">
+    <div class="card">
+      <p class="brand-tagline">Sign in to manage your API keys, monitor usage, and test translations on the UgaJapa platform.</p>
+      <div class="tabs">
+        <button id="tabLogin" class="active">Log in</button>
+        <button id="tabSignup">Sign up</button>
+      </div>
+      <form id="loginForm">
+        <label>Email</label>
+        <input type="email" id="loginEmail" required autocomplete="username" />
+        <label>Password</label>
+        <input type="password" id="loginPassword" required autocomplete="current-password" />
+        <div class="error" id="loginError"></div>
+        <button type="submit">Log in</button>
+      </form>
+      <form id="signupForm" style="display:none;">
+        <label>Full name</label>
+        <input type="text" id="signupName" required />
+        <label>Email</label>
+        <input type="email" id="signupEmail" required autocomplete="username" />
+        <label>Password (min 8 characters)</label>
+        <input type="password" id="signupPassword" required minlength="8" autocomplete="new-password" />
+        <div class="error" id="signupError"></div>
+        <button type="submit">Create account</button>
+      </form>
+      <form id="verifyForm" style="display:none;">
+        <p class="muted" style="margin-top:0;">We sent a 6-digit code to <strong id="verifyEmailLabel"></strong>. Enter it below to activate your account.</p>
+        <label>Verification code</label>
+        <input type="text" id="verifyCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autocomplete="one-time-code" />
+        <div class="error" id="verifyError"></div>
+        <div class="msg" id="verifyMsg"></div>
+        <button type="submit">Verify & continue</button>
+        <button type="button" id="resendCodeBtn" class="secondary" style="margin-top:10px;width:100%;">Resend code</button>
+      </form>
+    </div>
     </div>
   </div>
-  <div id="toast" class="toast hidden" role="status"></div>
-  <script src="/js/api.js"></script>
-  <script src="/js/app.js"></script>
+
+  <div id="dashView">
+    <div class="dash-shell">
+      <aside class="dash-sidebar">
+        <div id="navMain">
+          <p class="dash-sidebar-label">Dashboard</p>
+          <nav class="dash-nav">
+            <button class="active" data-panel="overview">Overview</button>
+            <button data-panel="playground">Playground</button>
+            <button data-panel="api">API Reference</button>
+            <button data-panel="languages">Languages</button>
+            <button data-panel="keys">API Keys</button>
+            <button data-panel="settings" data-settings-entry="general">Settings</button>
+            <button data-panel="admin" id="navAdminBtn" style="display:none;">Admin</button>
+          </nav>
+        </div>
+        <div id="navSettings" style="display:none;">
+          <button type="button" id="settingsBack" class="nav-back">← Dashboard</button>
+          <p class="dash-sidebar-label">Organization</p>
+          <nav class="settings-nav">
+            <button class="active" data-settings="general">General</button>
+            <button data-settings="billing">Billing</button>
+            <button data-settings="team">Team</button>
+            <button data-settings="profile">Profile</button>
+            <button data-settings="limits">Limits</button>
+            <button data-settings="usage">Usage</button>
+            <button data-settings="terms">Model Terms</button>
+            <button data-settings="projects">Projects</button>
+            <button data-settings="data">Data Controls</button>
+            <button data-settings="audit">Audit Logs</button>
+          </nav>
+        </div>
+      </aside>
+
+      <div class="dash-content">
+    <div id="panel-overview" class="dash-panel active">
+      <div class="card">
+        <h2>Platform status</h2>
+        <p class="muted" style="margin:-8px 0 14px;">Live health of UgaJapa translation services.</p>
+        <div id="engineGrid" class="engine-grid muted">Loading platform status…</div>
+      </div>
+
+      <div class="card">
+        <h2>Usage this month</h2>
+        <div class="row">
+          <span id="usageText" class="muted">—</span>
+          <span id="usagePlan" class="muted">—</span>
+        </div>
+        <div class="bar-track"><div class="bar-fill" id="usageBar" style="width:0%"></div></div>
+      </div>
+
+      <div class="card">
+        <h2>Daily usage</h2>
+        <table>
+          <thead><tr><th>Date</th><th>Requests</th><th>Characters</th></tr></thead>
+          <tbody id="usageHistoryBody"><tr><td colspan="3" class="muted">—</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Billing — current month</h2>
+        <div id="billingBox" class="muted">—</div>
+        <div id="upgradeBox"></div>
+      </div>
+    </div>
+
+    <div id="panel-playground" class="dash-panel">
+      <div class="card">
+        <h2>Translation playground</h2>
+        <p class="muted" style="margin:-8px 0 16px;">Try the UgaJapa translation engine — automatic language detection and routing across our global platform.</p>
+        <label>Text to translate</label>
+        <textarea id="playText" placeholder="Enter text in any language…"></textarea>
+        <div class="two-col">
+          <div>
+            <label>From (optional — auto-detect if empty)</label>
+            <select id="playFrom"><option value="">Auto-detect</option></select>
+          </div>
+          <div>
+            <label>To</label>
+            <select id="playTo" required><option value="en">English</option></select>
+          </div>
+        </div>
+        <button id="playBtn" class="accent">Translate with UgaJapa</button>
+        <div class="error" id="playError"></div>
+        <div id="playResult" style="display:none;" class="play-result"></div>
+      </div>
+    </div>
+
+    <div id="panel-api" class="dash-panel">
+      <div class="card">
+        <h2>API quick start</h2>
+        <p class="muted" style="margin:-8px 0 16px;">Authenticate every request with your UgaJapa API key via the <code>X-API-Key</code> header.</p>
+
+        <h3>Translate text</h3>
+        <pre id="codeTranslate"></pre>
+        <button class="secondary copy-btn" data-copy="codeTranslate">Copy</button>
+
+        <h3 style="margin-top:20px;">Detect language</h3>
+        <pre id="codeDetect"></pre>
+        <button class="secondary copy-btn" data-copy="codeDetect">Copy</button>
+
+        <h3 style="margin-top:20px;">List supported languages</h3>
+        <pre id="codeLanguages"></pre>
+        <button class="secondary copy-btn" data-copy="codeLanguages">Copy</button>
+      </div>
+
+      <div class="card">
+        <h2>The UgaJapa translation stack</h2>
+        <p class="muted" style="margin:-8px 0 14px;">Our platform combines multiple in-house engines for speed, accuracy, and resilience.</p>
+        <div class="engine-grid">
+          <div class="engine-tile featured">
+            <h4>UgaJapa Neural Engine</h4>
+            <p>AI-powered translation optimised for African languages, Japanese, and complex language pairs.</p>
+          </div>
+          <div class="engine-tile featured">
+            <h4>UgaJapa Voice Engine</h4>
+            <p>Speech-to-text for voice messages, audio files, and video subtitle generation.</p>
+          </div>
+          <div class="engine-tile">
+            <h4>UgaJapa Global Engine</h4>
+            <p>Worldwide text translation across 197 languages with enterprise-grade quality.</p>
+          </div>
+          <div class="engine-tile">
+            <h4>UgaJapa Speak</h4>
+            <p>Natural text-to-speech read-aloud for translated content.</p>
+          </div>
+          <div class="engine-tile">
+            <h4>UgaJapa Bot</h4>
+            <p>Resilient on-platform fallback engine — always available, no external dependency.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="panel-languages" class="dash-panel">
+      <div class="card">
+        <h2>Supported languages</h2>
+        <p class="muted" style="margin:-8px 0 12px;">UgaJapa supports translation worldwide — from local Ugandan languages to every major world language.</p>
+        <div class="row">
+          <span id="langCount" class="muted">—</span>
+          <input type="search" id="langSearch" placeholder="Search languages…" style="max-width:240px;margin:0;" />
+        </div>
+        <div id="langGrid" class="lang-grid muted">Loading…</div>
+      </div>
+    </div>
+
+    <div id="panel-keys" class="dash-panel">
+      <div class="card">
+        <h2>API keys</h2>
+        <p class="muted" style="margin:-8px 0 14px;">Generate keys to connect your apps, chat plugins, and integrations to the UgaJapa Translation API.</p>
+        <div id="keyRevealBox"></div>
+        <div class="inline-form">
+          <div>
+            <label>New key name</label>
+            <input type="text" id="newKeyName" placeholder="e.g. Production App Key" />
+          </div>
+          <button id="genKeyBtn">Generate key</button>
+        </div>
+        <div class="error" id="keyError"></div>
+        <table style="margin-top:16px;">
+          <thead>
+            <tr><th>Name</th><th>Key</th><th>Created</th><th>Last used</th><th>Status</th><th></th></tr>
+          </thead>
+          <tbody id="keysTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="panel-settings" class="dash-panel">
+      <div id="settings-general" class="settings-section active">
+        <div class="page-header">
+          <h2>General</h2>
+          <p>Organization details and account overview.</p>
+        </div>
+        <div class="card">
+          <div class="settings-field">
+            <label>Organization name</label>
+            <div id="setOrgName" class="field-value">—</div>
+          </div>
+          <div class="settings-field">
+            <label>Account email</label>
+            <div id="setOrgEmail" class="field-value">—</div>
+          </div>
+          <div class="settings-field">
+            <label>Current plan</label>
+            <div id="setOrgPlan" class="field-value">—</div>
+          </div>
+          <div class="settings-field">
+            <label>Member since</label>
+            <div id="setOrgSince" class="field-value">—</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="settings-billing" class="settings-section">
+        <div class="page-header">
+          <h2>Billing</h2>
+          <p>Monthly usage charges and payment status.</p>
+        </div>
+        <div class="card">
+          <div class="settings-field">
+            <label>Current month</label>
+            <div id="setBillingCurrent" class="field-value">—</div>
+          </div>
+          <div class="settings-field">
+            <label>Billing history</label>
+            <table class="audit-table">
+              <thead><tr><th>Month</th><th>Characters</th><th>Amount</th><th>Status</th></tr></thead>
+              <tbody id="setBillingHistory"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+            </table>
+          </div>
+          <div class="settings-field">
+            <label>Upgrade plan</label>
+            <div id="setUpgradeBox" class="upgrade-grid muted">Loading…</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="settings-team" class="settings-section">
+        <div class="page-header">
+          <h2>Team</h2>
+          <p>Manage who has access to your UgaJapa organization.</p>
+        </div>
+        <div class="card">
+          <table class="audit-table">
+            <thead><tr><th>Name</th><th>Email</th><th>Role</th></tr></thead>
+            <tbody id="setTeamBody"><tr><td colspan="3" class="muted">Loading…</td></tr></tbody>
+          </table>
+          <p class="muted" style="margin-top:16px;">Team invitations are available on Business and Enterprise plans.</p>
+        </div>
+      </div>
+
+      <div id="settings-profile" class="settings-section">
+        <div class="page-header">
+          <h2>Profile</h2>
+          <p>Your personal account information.</p>
+        </div>
+        <div class="card">
+          <div class="settings-field">
+            <label>Full name</label>
+            <div id="setProfileName" class="field-value">—</div>
+          </div>
+          <div class="settings-field">
+            <label>Email address</label>
+            <div id="setProfileEmail" class="field-value">—</div>
+          </div>
+          <div class="settings-field">
+            <label>User ID</label>
+            <div id="setProfileId" class="field-value"><code>—</code></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="settings-limits" class="settings-section">
+        <div class="page-header">
+          <h2>Limits</h2>
+          <p>Character quotas and rate limits for your plan.</p>
+        </div>
+        <div class="card">
+          <div class="settings-field">
+            <label>Monthly character limit</label>
+            <div id="setLimitChars" class="field-value">—</div>
+          </div>
+          <div class="settings-field">
+            <label>API rate limit</label>
+            <div class="field-value">10 requests per second per API key</div>
+          </div>
+          <div class="settings-field">
+            <label>Plan tiers</label>
+            <div class="plan-grid" id="setPlanGrid"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="settings-usage" class="settings-section">
+        <div class="page-header">
+          <h2>Usage</h2>
+          <p>Translation activity for the current billing period.</p>
+        </div>
+        <div class="card">
+          <div class="settings-field">
+            <label>This month</label>
+            <div id="setUsageSummary" class="field-value">—</div>
+            <div class="bar-track" style="margin-top:10px;"><div class="bar-fill" id="setUsageBar" style="width:0%"></div></div>
+          </div>
+          <div class="settings-field">
+            <label>Daily breakdown</label>
+            <table class="audit-table">
+              <thead><tr><th>Date</th><th>Requests</th><th>Characters</th></tr></thead>
+              <tbody id="setUsageHistory"><tr><td colspan="3" class="muted">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div id="settings-terms" class="settings-section">
+        <div class="page-header">
+          <h2>Model Terms</h2>
+          <p>Terms governing use of the UgaJapa translation platform.</p>
+        </div>
+        <div class="card">
+          <div class="settings-field">
+            <label>Acceptable use</label>
+            <div class="field-value">UgaJapa translation services may be used for lawful text, speech, and media translation. Do not use the API for spam, harassment, or generating harmful content.</div>
+          </div>
+          <div class="settings-field">
+            <label>Data processing</label>
+            <div class="field-value">Text submitted for translation is processed to deliver results. UgaJapa does not sell your translation data to third parties.</div>
+          </div>
+          <div class="settings-field">
+            <label>Service availability</label>
+            <div class="field-value">The platform routes requests across multiple UgaJapa engines for reliability. Quality scores are provided with each translation response.</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="settings-projects" class="settings-section">
+        <div class="page-header">
+          <h2>Projects</h2>
+          <p>API keys grouped by application or integration.</p>
+        </div>
+        <div class="card">
+          <table class="audit-table">
+            <thead><tr><th>Project</th><th>Key prefix</th><th>Created</th><th>Status</th></tr></thead>
+            <tbody id="setProjectsBody"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="settings-data" class="settings-section">
+        <div class="page-header">
+          <h2>Data Controls</h2>
+          <p>Manage your data and account lifecycle.</p>
+        </div>
+        <div class="card">
+          <div class="settings-field">
+            <label>Usage records</label>
+            <div class="field-value">Translation usage is retained for billing and analytics. Contact support to request a data export.</div>
+          </div>
+          <div class="settings-field">
+            <label>Revoke sessions</label>
+            <div class="field-value">Use the Log out button in the header to end your current session.</div>
+          </div>
+          <div class="settings-field">
+            <label>Delete account</label>
+            <div class="field-value">To permanently delete your account and all associated data, contact <a href="mailto:support@ugajapa.ac.ug">support@ugajapa.ac.ug</a>.</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="settings-audit" class="settings-section">
+        <div class="page-header">
+          <h2>Audit Logs</h2>
+          <p>Recent account and API key activity.</p>
+        </div>
+        <div class="card">
+          <table class="audit-table">
+            <thead><tr><th>Event</th><th>Details</th><th>Date</th></tr></thead>
+            <tbody id="setAuditBody"><tr><td colspan="3" class="muted">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="panel-admin" class="dash-panel">
+      <div class="page-header">
+        <h2>Admin — Users &amp; API Keys</h2>
+        <p>Platform-wide account and key management. Visible only to admin accounts.</p>
+      </div>
+      <div class="card">
+        <h3>Users</h3>
+        <table>
+          <thead>
+            <tr><th>Email</th><th>Plan</th><th>Status</th><th>Chars (month)</th><th>Joined</th><th></th></tr>
+          </thead>
+          <tbody id="adminUsersBody"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div id="adminKeysCard" class="card" style="display:none;">
+        <h3>Keys — <span id="adminKeysUserEmail"></span></h3>
+        <table>
+          <thead>
+            <tr><th>Name</th><th>Key</th><th>Created</th><th>Last used</th><th>Status</th><th></th></tr>
+          </thead>
+          <tbody id="adminKeysBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+(function () {
+  const API = "";
+  let token = localStorage.getItem("ugajapa_token") || null;
+  let lastApiKey = localStorage.getItem("ugajapa_last_key") || "";
+  let allLanguages = [];
+
+  const $ = (id) => document.getElementById(id);
+
+  function authHeaders() {
+    return token ? { Authorization: "Bearer " + token } : {};
+  }
+
+  async function api(path, opts = {}) {
+    const res = await fetch(API + path, {
+      ...opts,
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(),
+        ...(opts.headers || {}),
+      },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(data.error || data.detail || ("HTTP " + res.status));
+      if (data.code) err.code = data.code;
+      throw err;
+    }
+    return data;
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  let lastMainPanel = "overview";
+
+  function enterSettingsNav(section) {
+    $("navMain").style.display = "none";
+    $("navSettings").style.display = "block";
+    showSettingsSection(section || "general");
+    document.querySelectorAll(".dash-panel").forEach((p) => {
+      p.classList.toggle("active", p.id === "panel-settings");
+    });
+    loadSettings();
+  }
+
+  function leaveSettingsNav() {
+    $("navSettings").style.display = "none";
+    $("navMain").style.display = "block";
+    showPanel(lastMainPanel);
+  }
+
+  function showPanel(name) {
+    if (name === "settings") {
+      enterSettingsNav("general");
+      return;
+    }
+    lastMainPanel = name;
+    $("navMain").style.display = "block";
+    $("navSettings").style.display = "none";
+    document.querySelectorAll(".dash-nav button").forEach((b) => {
+      b.classList.toggle("active", b.dataset.panel === name);
+    });
+    document.querySelectorAll(".dash-panel").forEach((p) => {
+      p.classList.toggle("active", p.id === "panel-" + name);
+    });
+  }
+
+  function showSettingsSection(name) {
+    document.querySelectorAll(".settings-nav button").forEach((b) => {
+      b.classList.toggle("active", b.dataset.settings === name);
+    });
+    document.querySelectorAll(".settings-section").forEach((s) => {
+      s.classList.toggle("active", s.id === "settings-" + name);
+    });
+  }
+
+  document.querySelectorAll(".dash-nav button").forEach((btn) => {
+    btn.onclick = () => {
+      if (btn.dataset.panel === "settings") {
+        enterSettingsNav(btn.dataset.settingsEntry || "general");
+      } else {
+        showPanel(btn.dataset.panel);
+        if (btn.dataset.panel === "admin") loadAdminUsers();
+      }
+    };
+  });
+
+  let isAdminAccount = false;
+
+  /** Admin accounts get the Admin panel only — no customer-facing nav/data. */
+  async function applyRoleView() {
+    try {
+      const profile = await api("/auth/me");
+      isAdminAccount = profile.role === "admin";
+    } catch (_) {
+      isAdminAccount = false;
+    }
+
+    document.querySelectorAll(".dash-nav button").forEach((b) => {
+      const isAdminBtn = b.dataset.panel === "admin";
+      b.style.display = isAdminAccount ? (isAdminBtn ? "block" : "none") : (isAdminBtn ? "none" : "block");
+    });
+
+    if (isAdminAccount) {
+      lastMainPanel = "admin";
+      showPanel("admin");
+    }
+  }
+
+  let adminUsersLoaded = false;
+
+  async function loadAdminUsers() {
+    if (adminUsersLoaded) return;
+    const body = $("adminUsersBody");
+    try {
+      const data = await api("/admin/users");
+      body.innerHTML = "";
+      if (!data.users || !data.users.length) {
+        body.innerHTML = '<tr><td colspan="6" class="muted">No users yet.</td></tr>';
+        adminUsersLoaded = true;
+        return;
+      }
+      for (const u of data.users) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${escapeHtml(u.email)}</td>
+          <td>${escapeHtml(u.plan)}</td>
+          <td><span class="badge ${u.active ? "active" : "revoked"}">${u.active ? "Active" : "Deactivated"}</span></td>
+          <td>${(u.characters_this_month || 0).toLocaleString()}</td>
+          <td class="muted">${u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}</td>
+          <td><button class="secondary view-keys-btn" data-user-id="${u.user_id}" data-user-email="${escapeHtml(u.email)}">View keys</button></td>
+        `;
+        body.appendChild(tr);
+      }
+      body.querySelectorAll(".view-keys-btn").forEach((btn) => {
+        btn.onclick = () => loadAdminKeys(btn.dataset.userId, btn.dataset.userEmail);
+      });
+      adminUsersLoaded = true;
+    } catch (err) {
+      body.innerHTML = `<tr><td colspan="6" class="error">${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+
+  async function loadAdminKeys(userId, email) {
+    $("adminKeysCard").style.display = "block";
+    $("adminKeysUserEmail").textContent = email;
+    const body = $("adminKeysBody");
+    body.innerHTML = '<tr><td colspan="6" class="muted">Loading…</td></tr>';
+    try {
+      const data = await api("/admin/users/" + userId + "/keys");
+      body.innerHTML = "";
+      if (!data.keys.length) {
+        body.innerHTML = '<tr><td colspan="6" class="muted">No API keys.</td></tr>';
+        return;
+      }
+      for (const k of data.keys) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${escapeHtml(k.name)}</td>
+          <td><code>${escapeHtml(k.key_value)}</code></td>
+          <td class="muted">${new Date(k.created_at).toLocaleDateString()}</td>
+          <td class="muted">${k.last_used ? new Date(k.last_used).toLocaleDateString() : "never"}</td>
+          <td><span class="badge ${k.revoked ? "revoked" : "active"}">${k.revoked ? "Revoked" : "Active"}</span></td>
+          <td>${k.revoked ? "" : `<button class="danger admin-revoke-btn" data-key-id="${k.key_id}">Revoke</button>`}</td>
+        `;
+        body.appendChild(tr);
+      }
+      body.querySelectorAll(".admin-revoke-btn").forEach((btn) => {
+        btn.onclick = async () => {
+          if (!confirm("Revoke this API key? It will stop working immediately for this user.")) return;
+          try {
+            await api("/admin/keys/" + btn.dataset.keyId, { method: "DELETE" });
+            loadAdminKeys(userId, email);
+          } catch (err) {
+            alert(err.message);
+          }
+        };
+      });
+    } catch (err) {
+      body.innerHTML = `<tr><td colspan="6" class="error">${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+
+  document.querySelectorAll(".settings-nav button").forEach((btn) => {
+    btn.onclick = () => showSettingsSection(btn.dataset.settings);
+  });
+
+  $("settingsBack").onclick = () => leaveSettingsNav();
+
+  const PLAN_INFO = {
+    free: { label: "Free", chars: "50,000", price: "$0/mo", base: 0 },
+    starter: { label: "Starter", chars: "500,000", price: "$9/mo", base: 9 },
+    business: { label: "Business", chars: "5,000,000", price: "$49/mo", base: 49 },
+    enterprise: { label: "Enterprise", chars: "Unlimited", price: "Custom", base: 0 },
+  };
+
+  function renderBillingBreakdown(b) {
+    if (!b?.billing) return "";
+    const bd = b.billing;
+    return `
+      <div class="billing-breakdown">
+        <div class="row"><span>Plan subscription</span><span>$${bd.base_usd.toFixed(2)}</span></div>
+        <div class="row"><span>Overage (${bd.overage_characters.toLocaleString()} chars)</span><span>$${bd.overage_usd.toFixed(2)}</span></div>
+        <div class="row" style="font-weight:600;border-top:1px solid var(--border);padding-top:8px;margin-top:4px;">
+          <span>Estimated total</span><span>$${bd.total_usd.toFixed(2)}</span>
+        </div>
+      </div>`;
+  }
+
+  function renderUpgradeCards(currentPlan, containerId) {
+    const el = $(containerId);
+    if (!el) return;
+    const order = ["free", "starter", "business", "enterprise"];
+    const currentIdx = order.indexOf(currentPlan);
+    el.innerHTML = order.map((code) => {
+      const p = PLAN_INFO[code];
+      const isCurrent = code === currentPlan;
+      const canUpgrade = order.indexOf(code) > currentIdx && code !== "enterprise";
+      return `
+        <div class="upgrade-card${isCurrent ? " current" : ""}">
+          <h4>${escapeHtml(p.label)}${isCurrent ? " · Current" : ""}</h4>
+          <div class="price">${escapeHtml(p.price)}</div>
+          <p>${escapeHtml(p.chars)} characters included${code === "starter" ? " · $0.50 per 10k overage" : code === "business" ? " · $0.30 per 10k overage" : ""}</p>
+          ${canUpgrade ? `<button class="accent upgrade-btn" data-plan="${code}">Upgrade to ${escapeHtml(p.label)}</button>` : ""}
+          ${code === "enterprise" && currentPlan !== "enterprise" ? `<p class="muted">Contact <a href="mailto:support@ugajapa.ac.ug">support@ugajapa.ac.ug</a></p>` : ""}
+        </div>`;
+    }).join("");
+    el.querySelectorAll(".upgrade-btn").forEach((btn) => {
+      btn.onclick = async () => {
+        if (!confirm(`Upgrade to ${btn.dataset.plan} plan? Charges apply from usage this month.`)) return;
+        try {
+          const r = await api("/billing/plan", {
+            method: "POST",
+            body: JSON.stringify({ plan: btn.dataset.plan }),
+          });
+          alert(r.message);
+          settingsLoaded = false;
+          loadAll();
+        } catch (err) {
+          alert(err.message);
+        }
+      };
+    });
+  }
+
+  let settingsLoaded = false;
+
+  async function loadSettings() {
+    if (settingsLoaded) return;
+    try {
+      const [profile, usage, history, billing, keys] = await Promise.all([
+        api("/auth/me"),
+        api("/usage/summary"),
+        api("/usage/history"),
+        api("/billing").catch(() => ({ bills: [] })),
+        api("/keys"),
+      ]);
+
+      const plan = profile.plan || "free";
+      const planInfo = PLAN_INFO[plan] || PLAN_INFO.free;
+      const since = profile.created_at
+        ? new Date(profile.created_at).toLocaleDateString()
+        : "—";
+
+      $("setOrgName").textContent = profile.full_name || "—";
+      $("setOrgEmail").textContent = profile.email || "—";
+      $("setOrgPlan").textContent = planInfo.label + " (" + planInfo.price + ")";
+      $("setOrgSince").textContent = since;
+
+      $("setProfileName").textContent = profile.full_name || "—";
+      $("setProfileEmail").textContent = profile.email || "—";
+      $("setProfileId").innerHTML = "<code>" + escapeHtml(profile.id || "—") + "</code>";
+
+      const limitText = usage.characters_limit === null
+        ? "Unlimited"
+        : usage.characters_limit.toLocaleString() + " characters / month";
+      $("setLimitChars").textContent = limitText + " (" + planInfo.label + " plan)";
+      $("setPlanGrid").innerHTML = Object.entries(PLAN_INFO).map(([code, p]) =>
+        `<div class="plan-card${code === plan ? " current" : ""}">
+          <h4>${escapeHtml(p.label)}${code === plan ? " · Current" : ""}</h4>
+          <p>${escapeHtml(p.chars)} chars · ${escapeHtml(p.price)}</p>
+        </div>`
+      ).join("");
+
+      const usageLimit = usage.characters_limit === null ? "Unlimited" : usage.characters_limit.toLocaleString();
+      $("setUsageSummary").textContent =
+        usage.characters_used.toLocaleString() + " / " + usageLimit + " characters used";
+      const pct = usage.characters_limit
+        ? Math.min(100, (usage.characters_used / usage.characters_limit) * 100)
+        : 5;
+      $("setUsageBar").style.width = pct + "%";
+      $("setUsageBar").style.background = usage.quota_exceeded ? "var(--red)" : "var(--navy)";
+
+      const uh = $("setUsageHistory");
+      if (!history.history.length) {
+        uh.innerHTML = '<tr><td colspan="3" class="muted">No usage yet this month.</td></tr>';
+      } else {
+        uh.innerHTML = history.history.map((r) => `
+          <tr>
+            <td>${escapeHtml(r.day)}</td>
+            <td>${r.requests.toLocaleString()}</td>
+            <td>${r.characters.toLocaleString()}</td>
+          </tr>`).join("");
+      }
+
+      const month = new Date().toISOString().slice(0, 7);
+      try {
+        const current = await api("/billing/" + month);
+        $("setBillingCurrent").innerHTML =
+          current.characters_total.toLocaleString() + " characters · $" +
+          current.amount_usd.toFixed(2) + " · " + (current.paid ? "Paid" : "Estimated") +
+          renderBillingBreakdown(current);
+      } catch {
+        $("setBillingCurrent").textContent = "No charges this month.";
+      }
+
+      renderUpgradeCards(plan, "setUpgradeBox");
+
+      const bh = $("setBillingHistory");
+      const bills = billing.bills || [];
+      if (!bills.length) {
+        bh.innerHTML = '<tr><td colspan="4" class="muted">No billing records yet.</td></tr>';
+      } else {
+        bh.innerHTML = bills.map((b) => `
+          <tr>
+            <td>${escapeHtml(b.month)}</td>
+            <td>${b.characters_total.toLocaleString()}</td>
+            <td>$${b.amount_usd.toFixed(2)}</td>
+            <td>${b.paid ? "Paid" : "Unpaid"}</td>
+          </tr>`).join("");
+      }
+
+      $("setTeamBody").innerHTML = `
+        <tr>
+          <td>${escapeHtml(profile.full_name || "—")}</td>
+          <td>${escapeHtml(profile.email || "—")}</td>
+          <td>Owner</td>
+        </tr>`;
+
+      const pb = $("setProjectsBody");
+      if (!keys.keys.length) {
+        pb.innerHTML = '<tr><td colspan="4" class="muted">No projects yet — create an API key to get started.</td></tr>';
+      } else {
+        pb.innerHTML = keys.keys.map((k) => `
+          <tr>
+            <td>${escapeHtml(k.name)}</td>
+            <td><code>${escapeHtml(k.key_prefix)}…</code></td>
+            <td class="muted">${new Date(k.created_at).toLocaleDateString()}</td>
+            <td><span class="badge ${k.revoked ? "revoked" : "active"}">${k.revoked ? "Revoked" : "Active"}</span></td>
+          </tr>`).join("");
+      }
+
+      const auditEvents = [];
+      auditEvents.push({
+        event: "Account created",
+        details: profile.email,
+        date: since,
+      });
+      for (const k of keys.keys.slice(0, 10)) {
+        auditEvents.push({
+          event: k.revoked ? "API key revoked" : "API key created",
+          details: k.name + " (" + k.key_prefix + "…)",
+          date: new Date(k.created_at).toLocaleDateString(),
+        });
+      }
+      $("setAuditBody").innerHTML = auditEvents.map((e) => `
+        <tr>
+          <td>${escapeHtml(e.event)}</td>
+          <td>${escapeHtml(e.details)}</td>
+          <td class="muted">${escapeHtml(e.date)}</td>
+        </tr>`).join("");
+
+      settingsLoaded = true;
+    } catch (err) {
+      if (String(err.message).match(/token|Unauthorized/i)) {
+        token = null;
+        localStorage.removeItem("ugajapa_token");
+        showAuth();
+      }
+    }
+  }
+
+  function showAuth() {
+    document.body.classList.remove("in-dash");
+    $("authView").style.display = "block";
+    $("dashView").style.display = "none";
+    $("logoutBtn").style.display = "none";
+    $("whoami").textContent = "";
+  }
+
+  function showDash() {
+    document.body.classList.add("in-dash");
+    $("authView").style.display = "none";
+    $("dashView").style.display = "block";
+    $("logoutBtn").style.display = "inline-block";
+    loadAll();
+  }
+
+  $("tabLogin").onclick = () => {
+    $("tabLogin").classList.add("active");
+    $("tabSignup").classList.remove("active");
+    $("loginForm").style.display = "block";
+    $("signupForm").style.display = "none";
+    $("verifyForm").style.display = "none";
+  };
+  $("tabSignup").onclick = () => {
+    $("tabSignup").classList.add("active");
+    $("tabLogin").classList.remove("active");
+    $("signupForm").style.display = "block";
+    $("loginForm").style.display = "none";
+    $("verifyForm").style.display = "none";
+  };
+
+  let pendingVerifyEmail = null;
+
+  function showVerifyForm(email) {
+    pendingVerifyEmail = email;
+    $("verifyEmailLabel").textContent = email;
+    $("verifyError").textContent = "";
+    $("verifyMsg").textContent = "";
+    $("loginForm").style.display = "none";
+    $("signupForm").style.display = "none";
+    $("verifyForm").style.display = "block";
+    $("tabLogin").classList.remove("active");
+    $("tabSignup").classList.remove("active");
+  }
+
+  $("loginForm").onsubmit = async (e) => {
+    e.preventDefault();
+    $("loginError").textContent = "";
+    const email = $("loginEmail").value.trim();
+    try {
+      const data = await api("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({
+          email,
+          password: $("loginPassword").value,
+        }),
+      });
+      token = data.token;
+      localStorage.setItem("ugajapa_token", token);
+      showDash();
+    } catch (err) {
+      if (err.code === "EMAIL_NOT_VERIFIED") {
+        showVerifyForm(email);
+        $("verifyMsg").textContent = "Your email isn't verified yet. Enter the code we sent, or resend a new one.";
+      } else {
+        $("loginError").textContent = err.message;
+      }
+    }
+  };
+
+  $("signupForm").onsubmit = async (e) => {
+    e.preventDefault();
+    $("signupError").textContent = "";
+    const email = $("signupEmail").value.trim();
+    try {
+      await api("/auth/signup", {
+        method: "POST",
+        body: JSON.stringify({
+          full_name: $("signupName").value.trim(),
+          email,
+          password: $("signupPassword").value,
+        }),
+      });
+      showVerifyForm(email);
+    } catch (err) {
+      $("signupError").textContent = err.message;
+    }
+  };
+
+  $("verifyForm").onsubmit = async (e) => {
+    e.preventDefault();
+    $("verifyError").textContent = "";
+    try {
+      const data = await api("/auth/verify", {
+        method: "POST",
+        body: JSON.stringify({
+          email: pendingVerifyEmail,
+          code: $("verifyCode").value.trim(),
+        }),
+      });
+      token = data.token;
+      localStorage.setItem("ugajapa_token", token);
+      showDash();
+    } catch (err) {
+      $("verifyError").textContent = err.message;
+    }
+  };
+
+  $("resendCodeBtn").onclick = async () => {
+    $("verifyError").textContent = "";
+    $("verifyMsg").textContent = "";
+    try {
+      const data = await api("/auth/verify/resend", {
+        method: "POST",
+        body: JSON.stringify({ email: pendingVerifyEmail }),
+      });
+      $("verifyMsg").textContent = data.message || "Code resent.";
+    } catch (err) {
+      $("verifyError").textContent = err.message;
+    }
+  };
+
+  $("logoutBtn").onclick = async () => {
+    try { await api("/auth/logout", { method: "POST" }); } catch (_) {}
+    token = null;
+    localStorage.removeItem("ugajapa_token");
+    showAuth();
+  };
+
+  async function loadEngines() {
+    try {
+      const h = await fetch(API + "/health").then((r) => r.json());
+      const tile = (name, up, detail, featured) => `
+        <div class="engine-tile${featured ? " featured" : ""}">
+          <div class="row"><h4>${escapeHtml(name)}</h4>
+          <span class="badge ${up ? "up" : "down"}">${up ? "Online" : "Offline"}</span></div>
+          <p>${escapeHtml(detail)}</p>
+        </div>`;
+      $("engineGrid").innerHTML = [
+        tile("UgaJapa Neural Engine", h.groq_llm, "AI translation for regional & complex pairs", true),
+        tile("UgaJapa Voice Engine", h.groq_whisper, "Speech recognition & transcription", true),
+        tile("UgaJapa Global Engine", h.google_translate, "197 languages worldwide", false),
+        tile("UgaJapa Listen", h.google_speech, "Voice-to-text processing", false),
+        tile("UgaJapa Speak", h.google_tts, "Text-to-speech synthesis", false),
+        tile("UgaJapa Bot", h.bot === "up", "On-platform resilient fallback", false),
+        tile("UgaJapa Platform", h.database === "up", "Accounts, usage & billing", false),
+      ].join("");
+    } catch {
+      $("engineGrid").textContent = "Unable to load platform status.";
+    }
+  }
+
+  async function loadUsage() {
+    const u = await api("/usage/summary");
+    $("whoami").textContent = u.plan ? ("Plan: " + u.plan) : "";
+    $("usagePlan").textContent = u.plan.toUpperCase() + " plan";
+    const limitText = u.characters_limit === null ? "Unlimited" : u.characters_limit.toLocaleString();
+    $("usageText").textContent =
+      u.characters_used.toLocaleString() + " / " + limitText + " characters used this month";
+    const pct = u.characters_limit ? Math.min(100, (u.characters_used / u.characters_limit) * 100) : 5;
+    $("usageBar").style.width = pct + "%";
+    $("usageBar").style.background = u.quota_exceeded ? "var(--red)" : "var(--navy)";
+
+    const warnEl = $("usageQuotaWarn");
+    if (warnEl) warnEl.remove();
+    if (u.quota_exceeded || (u.characters_limit && u.characters_used / u.characters_limit >= 0.85)) {
+      const warn = document.createElement("div");
+      warn.id = "usageQuotaWarn";
+      warn.className = "quota-warn";
+      warn.innerHTML = u.quota_exceeded
+        ? "<strong>Quota exceeded.</strong> Upgrade your plan to continue translating and avoid service interruption."
+        : "<strong>Approaching quota limit.</strong> Consider upgrading before you hit your monthly cap.";
+      $("usageBar").parentElement?.appendChild(warn);
+    }
+
+    renderUpgradeCards(u.plan, "upgradeBox");
+  }
+
+  async function loadUsageHistory() {
+    const { history } = await api("/usage/history");
+    const body = $("usageHistoryBody");
+    if (!history.length) {
+      body.innerHTML = '<tr><td colspan="3" class="muted">No usage yet this month.</td></tr>';
+      return;
+    }
+    body.innerHTML = history.map((r) => `
+      <tr>
+        <td>${escapeHtml(r.day)}</td>
+        <td>${r.requests.toLocaleString()}</td>
+        <td>${r.characters.toLocaleString()}</td>
+      </tr>`).join("");
+  }
+
+  async function loadKeys() {
+    const { keys } = await api("/keys");
+    const body = $("keysTableBody");
+    body.innerHTML = "";
+    if (!keys.length) {
+      body.innerHTML = '<tr><td colspan="6" class="muted">No API keys yet.</td></tr>';
+      return;
+    }
+    for (const k of keys) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${escapeHtml(k.name)}</td>
+        <td><code>${escapeHtml(k.key_value)}</code></td>
+        <td class="muted">${new Date(k.created_at).toLocaleDateString()}</td>
+        <td class="muted">${k.last_used ? new Date(k.last_used).toLocaleDateString() : "never"}</td>
+        <td><span class="badge ${k.revoked ? "revoked" : "active"}">${k.revoked ? "Revoked" : "Active"}</span></td>
+        <td>${k.revoked ? "" : `<button class="danger revoke-btn" data-id="${k.key_id}">Revoke</button>`}</td>`;
+      body.appendChild(tr);
+    }
+    body.querySelectorAll(".revoke-btn").forEach((btn) => {
+      btn.onclick = async () => {
+        if (!confirm("Revoke this API key?")) return;
+        try {
+          await api("/keys/" + btn.dataset.id, { method: "DELETE" });
+          settingsLoaded = false;
+          loadKeys();
+        } catch (err) { alert(err.message); }
+      };
+    });
+    updateCodeSamples(keys);
+  }
+
+  async function loadBilling() {
+    const month = new Date().toISOString().slice(0, 7);
+    try {
+      const b = await api("/billing/" + month);
+      $("billingBox").innerHTML = `
+        <div class="row">
+          <span>${b.characters_total.toLocaleString()} characters translated</span>
+          <span>$${b.amount_usd.toFixed(2)} — ${b.paid ? "Paid" : "Estimated"}</span>
+        </div>
+        ${renderBillingBreakdown(b)}`;
+    } catch (err) {
+      $("billingBox").textContent = "Unable to load billing: " + err.message;
+    }
+  }
+
+  function fillLangSelects() {
+    const opts = allLanguages.map((l) =>
+      `<option value="${escapeHtml(l.code)}">${escapeHtml(l.name)} (${escapeHtml(l.code)})</option>`
+    ).join("");
+    $("playFrom").innerHTML = '<option value="">Auto-detect</option>' + opts;
+    $("playTo").innerHTML = opts;
+    if ($("playTo").querySelector('option[value="en"]')) $("playTo").value = "en";
+  }
+
+  function renderLanguages(filter) {
+    const q = (filter || "").trim().toLowerCase();
+    const list = q
+      ? allLanguages.filter((l) => l.name.toLowerCase().includes(q) || l.code.toLowerCase().includes(q))
+      : allLanguages;
+    $("langCount").textContent = list.length + " of " + allLanguages.length + " UgaJapa-supported languages";
+    $("langGrid").innerHTML = list.map((l) =>
+      `<div class="lang-item"><strong>${escapeHtml(l.code)}</strong> — ${escapeHtml(l.name)}</div>`
+    ).join("") || '<span class="muted">No matches.</span>';
+  }
+
+  async function loadLanguages() {
+    const data = await api("/dashboard/languages");
+    allLanguages = data.languages || [];
+    fillLangSelects();
+    renderLanguages();
+  }
+
+  function updateCodeSamples(keys) {
+    const active = keys.find((k) => !k.revoked);
+    const keyPlaceholder = lastApiKey || (active ? active.key_prefix + "…" : "ugj_live_YOUR_KEY");
+    const base = window.location.origin;
+    $("codeTranslate").textContent =
+`# UgaJapa Translation API — translate text
+curl ${base}/translate -s \\
+  -H "Content-Type: application/json" \\
+  -H "X-API-Key: ${keyPlaceholder}" \\
+  -d '{
+    "text": "Hello, how are you?",
+    "from": "en",
+    "to": "lg"
+  }'`;
+    $("codeDetect").textContent =
+`# UgaJapa Translation API — detect language
+curl ${base}/detect -s \\
+  -H "Content-Type: application/json" \\
+  -H "X-API-Key: ${keyPlaceholder}" \\
+  -d '{"text": "Webale nnyo"}'`;
+    $("codeLanguages").textContent =
+`# UgaJapa Translation API — list all supported languages
+curl ${base}/languages -s \\
+  -H "X-API-Key: ${keyPlaceholder}"`;
+  }
+
+  document.querySelectorAll(".copy-btn").forEach((btn) => {
+    btn.onclick = () => {
+      const el = $(btn.dataset.copy);
+      navigator.clipboard.writeText(el.textContent).then(() => {
+        btn.textContent = "Copied!";
+        setTimeout(() => { btn.textContent = "Copy"; }, 1500);
+      });
+    };
+  });
+
+  $("langSearch").oninput = (e) => renderLanguages(e.target.value);
+
+  $("playBtn").onclick = async () => {
+    $("playError").textContent = "";
+    $("playResult").style.display = "none";
+    const text = $("playText").value.trim();
+    const to = $("playTo").value;
+    const from = $("playFrom").value;
+    if (!text) { $("playError").textContent = "Enter some text to translate."; return; }
+    if (!to) { $("playError").textContent = "Select a target language."; return; }
+    $("playBtn").disabled = true;
+    $("playBtn").textContent = "Translating…";
+    try {
+      const body = { text, to };
+      if (from) body.from = from;
+      const r = await api("/dashboard/translate", { method: "POST", body: JSON.stringify(body) });
+      $("playResult").style.display = "block";
+      $("playResult").innerHTML = `
+        <div><strong>UgaJapa translation</strong></div>
+        <div style="margin-top:8px;">${escapeHtml(r.translated)}</div>
+        <div class="play-meta">
+          ${escapeHtml(r.from)} → ${escapeHtml(r.to)}
+          · Quality: ${escapeHtml(r.quality?.label || "—")} (${r.quality_score ?? "—"})
+          · ${r.characters_used} characters
+        </div>
+        ${r.review_reason ? `<div class="play-review-warn" style="margin-top:10px;padding:10px 12px;background:#fff5f5;border:1px solid #f5c6c6;border-radius:6px;font-size:13px;color:#8b2e2e;"><strong>Review:</strong> ${escapeHtml(r.review_reason)}</div>` : ""}`;
+      loadUsage();
+      loadUsageHistory();
+    } catch (err) {
+      $("playError").textContent = err.message;
+    } finally {
+      $("playBtn").disabled = false;
+      $("playBtn").textContent = "Translate with UgaJapa";
+    }
+  };
+
+  $("genKeyBtn").onclick = async () => {
+    $("keyError").textContent = "";
+    const name = $("newKeyName").value.trim() || "Untitled Key";
+    try {
+      const k = await api("/keys/generate", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      });
+      lastApiKey = k.key_value;
+      localStorage.setItem("ugajapa_last_key", lastApiKey);
+      $("keyRevealBox").innerHTML = `
+        <div class="key-reveal">
+          <strong>Copy this key now — it will not be shown again.</strong>
+          <code>${escapeHtml(k.key_value)}</code>
+        </div>`;
+      $("newKeyName").value = "";
+      settingsLoaded = false;
+      loadKeys();
+    } catch (err) {
+      $("keyError").textContent = err.message;
+    }
+  };
+
+  async function loadAll() {
+    try {
+      await applyRoleView();
+      if (isAdminAccount) {
+        await loadAdminUsers();
+        return;
+      }
+      await Promise.all([
+        loadEngines(),
+        loadUsage(),
+        loadUsageHistory(),
+        loadKeys(),
+        loadBilling(),
+        loadLanguages(),
+      ]);
+    } catch (err) {
+      if (String(err.message).match(/token|Unauthorized/i)) {
+        token = null;
+        localStorage.removeItem("ugajapa_token");
+        showAuth();
+      }
+    }
+  }
+
+  if (token) showDash();
+  else showAuth();
+})();
+</script>
+
 </body>
 </html>

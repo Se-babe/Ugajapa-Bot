@@ -1,4 +1,6 @@
 .env
+.env.prod
+render.deploy.yaml
 **/node_modules/
 **/dist/
 **/.venv/

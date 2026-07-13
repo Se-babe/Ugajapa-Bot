@@ -1,6 +1,3 @@
-import { Request, Response } from "express";
-import { query } from "./db";
-
 export const PLAN_LIMITS: Record<string, number> = {
   free: 50_000,
   starter: 500_000,
@@ -10,12 +7,24 @@ export const PLAN_LIMITS: Record<string, number> = {
 
 export const PLAN_PRICES: Record<
   string,
-  { base: number; overagePer10k: number }
+  { base: number; overagePer10k: number; label: string }
 > = {
-  free: { base: 0, overagePer10k: 0 },
-  starter: { base: 9, overagePer10k: 0.5 },
-  business: { base: 49, overagePer10k: 0.3 },
-  enterprise: { base: 0, overagePer10k: 0 },
+  free: { base: 0, overagePer10k: 0, label: "Free" },
+  starter: { base: 9, overagePer10k: 0.5, label: "Starter" },
+  business: { base: 49, overagePer10k: 0.3, label: "Business" },
+  enterprise: { base: 0, overagePer10k: 0, label: "Enterprise" },
+};
+
+export const PLAN_ORDER = ["free", "starter", "business", "enterprise"] as const;
+
+export type BillingBreakdown = {
+  plan: string;
+  characters_total: number;
+  included_characters: number;
+  overage_characters: number;
+  base_usd: number;
+  overage_usd: number;
+  total_usd: number;
 };
 
 export function countCharacters(text: string): number {
@@ -26,47 +35,56 @@ export function getPlanLimit(plan: string): number {
   return PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
 }
 
-export async function apiKeyUsage(req: Request, res: Response): Promise<void> {
-  if (!req.apiKey) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
+export function getBillingBreakdown(
+  plan: string,
+  charactersTotal: number
+): BillingBreakdown {
+  const pricing = PLAN_PRICES[plan] ?? PLAN_PRICES.free;
+  const limit = getPlanLimit(plan);
+
+  if (plan === "enterprise") {
+    return {
+      plan,
+      characters_total: charactersTotal,
+      included_characters: charactersTotal,
+      overage_characters: 0,
+      base_usd: 0,
+      overage_usd: 0,
+      total_usd: 0,
+    };
   }
 
-  const result = await query<{ total: string }>(
-    `SELECT COALESCE(SUM(characters), 0)::text AS total
-     FROM usage_records
-     WHERE user_id = $1
-       AND timestamp >= date_trunc('month', NOW())
-       AND timestamp < date_trunc('month', NOW()) + INTERVAL '1 month'`,
-    [req.apiKey.userId]
-  );
+  if (plan === "free") {
+    return {
+      plan,
+      characters_total: charactersTotal,
+      included_characters: Math.min(charactersTotal, limit),
+      overage_characters: Math.max(0, charactersTotal - limit),
+      base_usd: 0,
+      overage_usd: 0,
+      total_usd: 0,
+    };
+  }
 
-  const used = parseInt(result.rows[0].total, 10);
-  const limit = getPlanLimit(req.apiKey.plan);
+  const overage = Math.max(0, charactersTotal - limit);
+  const overageBlocks = Math.ceil(overage / 10_000);
+  const overage_usd = Number((overageBlocks * pricing.overagePer10k).toFixed(2));
+  const base_usd = pricing.base;
 
-  res.json({
-    period: new Date().toISOString().slice(0, 7),
-    plan: req.apiKey.plan,
-    usage: {
-      sourceCharacters: used,
-      billedCharacters: used,
-      limit: limit === Number.MAX_SAFE_INTEGER ? null : limit,
-      remaining: limit === Number.MAX_SAFE_INTEGER ? null : Math.max(0, limit - used),
-    },
-    quotaExceeded: used >= limit,
-  });
+  return {
+    plan,
+    characters_total: charactersTotal,
+    included_characters: Math.min(charactersTotal, limit),
+    overage_characters: overage,
+    base_usd,
+    overage_usd,
+    total_usd: Number((base_usd + overage_usd).toFixed(2)),
+  };
 }
 
 export function calculateBill(
   plan: string,
   charactersTotal: number
 ): number {
-  const pricing = PLAN_PRICES[plan] ?? PLAN_PRICES.free;
-  if (plan === "enterprise") return 0;
-  if (plan === "free") return 0;
-
-  const limit = getPlanLimit(plan);
-  const overage = Math.max(0, charactersTotal - limit);
-  const overageBlocks = Math.ceil(overage / 10_000);
-  return Number((pricing.base + overageBlocks * pricing.overagePer10k).toFixed(2));
+  return getBillingBreakdown(plan, charactersTotal).total_usd;
 }

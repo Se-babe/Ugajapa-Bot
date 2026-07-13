@@ -2,12 +2,13 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: ugajapa-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-mmuser}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mmuser_password}
       POSTGRES_DB: ${POSTGRES_DB:-ugajapa_api}
     ports:
-      - "${POSTGRES_PORT:-5433}:5432"
+      - "${POSTGRES_PORT:-5434}:5432"
     volumes:
       - ugajapa_pgdata:/var/lib/postgresql/data
       - ./translation-api/sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
@@ -18,12 +19,17 @@ services:
       retries: 10
 
   ugajapa-bot:
-    profiles: ["bot", "full"]
     build: ./ugajapa-bot
     container_name: ugajapa-bot
+    restart: unless-stopped
     ports:
-      - "${BOT_PORT:-8001}:8000"
-    # Host port 8001 by default (8000 often used by Coolify). Internal port stays 8000.
+      - "${BOT_PORT:-8000}:8000"
+    # Bot stays reachable on localhost for local plugin testing;
+    # do not expose this publicly in production. The host-side port is
+    # configurable (BOT_PORT) in case 8000 conflicts with something else on
+    # the machine — the container's internal port stays 8000 regardless,
+    # since other containers reach it via ugajapa-bot:8000 on the compose
+    # network, not through this host mapping.
     volumes:
       - ugajapa_model_cache:/root/.cache/huggingface
     healthcheck:
@@ -36,30 +42,29 @@ services:
   translation-api:
     build: ./translation-api
     container_name: ugajapa-translation-api
+    restart: unless-stopped
     ports:
-      - "5000:5000"
-    volumes:
-      - ./translation-api/public:/app/public:ro
+      - "${API_PORT:-5000}:5000"
+    env_file:
+      - ./translation-api/.env
     environment:
-      PORT: 5000
+      # Overrides the Dockerfile's baked-in NODE_ENV=production (needed for
+      # Render) — local Postgres has no SSL, so production mode there makes
+      # every DB connection fail. Render sets its own NODE_ENV=production at
+      # the platform level, which takes precedence over this image regardless.
+      NODE_ENV: development
+      PORT: 5000 # container-internal port; change API_PORT above to remap the host side
       DATABASE_URL: postgresql://${POSTGRES_USER:-mmuser}:${POSTGRES_PASSWORD:-mmuser_password}@postgres:5432/${POSTGRES_DB:-ugajapa_api}
-      JWT_SECRET: ${JWT_SECRET:-your-very-long-random-secret-here}
       BOT_URL: http://ugajapa-bot:8000
-      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
-      SUNBIRD_API_URL: ${SUNBIRD_API_URL:-https://api.sunbird.ai/translate}
-      SUNBIRD_API_KEY: ${SUNBIRD_API_KEY:-}
-      BILLING_CRON_SECRET: ${BILLING_CRON_SECRET:-another-random-secret}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@ugajapa.ac.ug}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-ChangeMeAdmin123!}
-      PORTAL_URL: ${PORTAL_URL:-http://localhost:5000}
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
-      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
-      STRIPE_PRICE_STARTER: ${STRIPE_PRICE_STARTER:-}
-      STRIPE_PRICE_BUSINESS: ${STRIPE_PRICE_BUSINESS:-}
+      # ADMIN_EMAIL / ADMIN_PASSWORD intentionally NOT overridden here —
+      # translation-api/.env (loaded via env_file above) is the single
+      # source of truth for these. An explicit override here previously
+      # shadowed that file with the root .env's stale defaults.
     depends_on:
       postgres:
         condition: service_healthy
+      ugajapa-bot:
+        condition: service_started
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s

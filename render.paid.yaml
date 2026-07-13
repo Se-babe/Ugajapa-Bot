@@ -1,0 +1,69 @@
+# UgaJapa Translation API — Render Blueprint (PAID — full stack with NLLB bot)
+# Use this file only if you upgrade to paid plans (~$39/mo).
+# Rename to render.yaml or set Blueprint Path to render.paid.yaml
+#
+# Includes: postgres (starter) + ugajapa-bot (standard, 2GB) + translation-api (starter)
+
+databases:
+  - name: ugajapa-postgres
+    databaseName: ugajapa_api
+    plan: starter
+    region: oregon
+
+services:
+  - type: pserv
+    name: ugajapa-bot
+    runtime: docker
+    dockerfilePath: ./ugajapa-bot/Dockerfile
+    dockerContext: ./ugajapa-bot
+    plan: standard
+    region: oregon
+    healthCheckPath: /health
+    envVars:
+      - key: HF_HOME
+        value: /data/huggingface
+    disk:
+      name: hf-model-cache
+      mountPath: /data/huggingface
+      sizeGB: 5
+
+  - type: web
+    name: translation-api
+    runtime: docker
+    dockerfilePath: ./translation-api/Dockerfile
+    dockerContext: ./translation-api
+    plan: starter
+    region: oregon
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ugajapa-postgres
+          property: connectionString
+      - key: BOT_URL
+        fromService:
+          type: pserv
+          name: ugajapa-bot
+          property: hostport
+      - key: JWT_SECRET
+        generateValue: true
+      - key: BILLING_CRON_SECRET
+        generateValue: true
+      - key: TRANSLATION_CACHE_TTL_SECONDS
+        value: "3600"
+      - key: TRANSLATION_CACHE_MAX_ENTRIES
+        value: "10000"
+      - key: DETECT_CACHE_TTL_SECONDS
+        value: "3600"
+      - key: BACK_TRANSLATION_ENABLED
+        value: "false"
+      - key: ADMIN_EMAIL
+        value: xwalesebabe@gmail.com
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false

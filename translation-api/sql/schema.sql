@@ -10,6 +10,10 @@ CREATE TABLE IF NOT EXISTS users (
   stripe_customer_id VARCHAR(255),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   active BOOLEAN NOT NULL DEFAULT TRUE,
+  email_verified BOOLEAN NOT NULL DEFAULT TRUE,
+  verification_code VARCHAR(10),
+  verification_code_expires_at TIMESTAMPTZ,
+  verification_code_sent_at TIMESTAMPTZ,
   CONSTRAINT users_plan_check CHECK (plan IN ('free', 'starter', 'business', 'enterprise'))
 );
 
@@ -83,3 +87,19 @@ CREATE TABLE IF NOT EXISTS admins (
   password_hash VARCHAR(255) NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- No FK on user_id: it may reference either users or admins (two separate
+-- tables), and a failed login (no such user) has no valid id to point to.
+CREATE TABLE IF NOT EXISTS login_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID,
+  email VARCHAR(255) NOT NULL,
+  success BOOLEAN NOT NULL,
+  reason VARCHAR(64),
+  ip_address VARCHAR(64),
+  user_agent TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_login_events_user ON login_events(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_login_events_created ON login_events(created_at DESC);

@@ -1,47 +1,69 @@
+import {
+  languageDisplayName,
+  normalizeTranslationCode,
+} from "./languages";
+import {
+  getCachedTranslation,
+  setCachedTranslation,
+} from "./translation_cache";
 import { botTranslate, BotTranslateResult } from "./ugajapa-bot";
 
-const SUNBIRD_API_URL = process.env.SUNBIRD_API_URL || "https://api.sunbird.ai/translate";
-const SUNBIRD_API_KEY = process.env.SUNBIRD_API_KEY || "";
+const GROQ_API_KEY = process.env.GROQ_API_KEY || "";
+const GROQ_MODEL = "llama-3.3-70b-versatile";
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || "";
+
+const UGANDAN_LANGS = new Set(["lg", "ach", "nyn", "teo"]);
 
 export type RouteResult = {
   translated: string;
   engine: string;
+  cached?: boolean;
 };
 
-async function sunbirdTranslate(
+async function groqTranslate(
   text: string,
   from: string,
   to: string
 ): Promise<string> {
-  if (!SUNBIRD_API_KEY) {
-    throw new Error("SUNBIRD_API_KEY not configured");
+  if (!GROQ_API_KEY) {
+    throw new Error("GROQ_API_KEY not configured");
   }
 
-  const res = await fetch(SUNBIRD_API_URL, {
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${SUNBIRD_API_KEY}`,
+      Authorization: `Bearer ${GROQ_API_KEY}`,
     },
     body: JSON.stringify({
-      source_language: from,
-      target_language: to,
-      text,
+      model: GROQ_MODEL,
+      temperature: 0.2,
+      messages: [
+        {
+          role: "system",
+          content:
+            `You are a translation engine. Translate the user's message from ${languageDisplayName(from)} ` +
+            `to ${languageDisplayName(to)}. Reply with ONLY the translated text — no explanations, ` +
+            `no quotation marks, no notes.`,
+        },
+        { role: "user", content: text },
+      ],
     }),
     signal: AbortSignal.timeout(30_000),
   });
 
   if (!res.ok) {
-    throw new Error(`Sunbird AI error ${res.status}`);
+    throw new Error(`Groq API error ${res.status}`);
   }
 
   const data = (await res.json()) as {
-    translated_text?: string;
-    translation?: string;
-    text?: string;
+    choices?: { message?: { content?: string } }[];
   };
-  return data.translated_text || data.translation || data.text || "";
+  const translated = data.choices?.[0]?.message?.content?.trim();
+  if (!translated) {
+    throw new Error("Groq API returned an empty translation");
+  }
+  return translated;
 }
 
 async function googleTranslate(
@@ -56,15 +78,23 @@ async function googleTranslate(
   const url = new URL("https://translation.googleapis.com/language/translate/v2");
   url.searchParams.set("key", GOOGLE_API_KEY);
 
+  const body: Record<string, string> = {
+    q: text,
+    target: to,
+    format: "text",
+  };
+  if (from) body.source = from;
+
   const res = await fetch(url.toString(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ q: text, source: from, target: to, format: "text" }),
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(15_000),
   });
 
   if (!res.ok) {
-    throw new Error(`Google Translate error ${res.status}`);
+    const errText = await res.text();
+    throw new Error(`Google Translate error ${res.status}: ${errText}`);
   }
 
   const data = (await res.json()) as {
@@ -73,115 +103,117 @@ async function googleTranslate(
   return data.data.translations[0].translatedText;
 }
 
-function isLugandaPair(from: string, to: string): boolean {
-  return from === "lg" || to === "lg";
+async function botFallback(
+  text: string,
+  from: string,
+  to: string
+): Promise<RouteResult> {
+  const result: BotTranslateResult = await botTranslate(text, from, to);
+  return { translated: result.translated, engine: "ugajapa-bot-fallback" };
+}
+
+type EngineStep = {
+  name: string;
+  run: () => Promise<RouteResult>;
+};
+
+function engineChain(
+  text: string,
+  from: string,
+  to: string
+): EngineStep[] {
+  const chain: EngineStep[] = [];
+  const ugandan = UGANDAN_LANGS.has(from) || UGANDAN_LANGS.has(to);
+  const japanese = from === "ja" || to === "ja";
+
+  // Regional / Japanese pairs: neural engine first for quality.
+  if (ugandan || japanese) {
+    if (GROQ_API_KEY) {
+      chain.push({
+        name: "groq",
+        run: async () => ({
+          translated: await groqTranslate(text, from, to),
+          engine: "groq",
+        }),
+      });
+    }
+  }
+
+  // Global engine — covers all 197+ world languages for every pair.
+  if (GOOGLE_API_KEY) {
+    chain.push({
+      name: "google",
+      run: async () => ({
+        translated: await googleTranslate(text, from, to),
+        engine: ugandan || japanese ? "google-fallback" : "google",
+      }),
+    });
+  }
+
+  // Non-regional pairs: neural engine as secondary fallback.
+  if (!ugandan && !japanese && GROQ_API_KEY) {
+    chain.push({
+      name: "groq-fallback",
+      run: async () => ({
+        translated: await groqTranslate(text, from, to),
+        engine: "groq-fallback",
+      }),
+    });
+  }
+
+  // On-platform resilient fallback.
+  chain.push({
+    name: "ugajapa-bot",
+    run: () => botFallback(text, from, to),
+  });
+
+  return chain;
 }
 
 /**
- * Route translation to the correct engine based on language pair.
- * Change only this file to swap/add engines.
+ * Universal translation routing — every language pair uses the full engine
+ * chain so regional (Ugandan/Japanese) and world languages all work.
  */
+async function translateUncached(
+  text: string,
+  from: string,
+  to: string
+): Promise<RouteResult> {
+  const src = normalizeTranslationCode(from);
+  const tgt = normalizeTranslationCode(to);
+  const chain = engineChain(text, src, tgt);
+
+  let lastError: Error | undefined;
+  for (const step of chain) {
+    try {
+      return await step.run();
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      console.warn(`Engine ${step.name} failed for ${src}->${tgt}:`, lastError.message);
+    }
+  }
+
+  throw lastError || new Error("All translation engines failed");
+}
+
 export async function routeTranslate(
   text: string,
   from: string,
   to: string
 ): Promise<RouteResult> {
-  if (from === to) {
+  const src = normalizeTranslationCode(from);
+  const tgt = normalizeTranslationCode(to);
+
+  if (src === tgt) {
     return { translated: text, engine: "none" };
   }
 
-  // English ↔ Luganda → Sunbird primary, UgaJapa Bot fallback
-  if ((from === "en" && to === "lg") || (from === "lg" && to === "en")) {
-    try {
-      const translated = await sunbirdTranslate(text, from, to);
-      return { translated, engine: "sunbird" };
-    } catch {
-      const result = await botTranslate(text, from, to);
-      return { translated: result.translated, engine: "ugajapa-bot-fallback" };
-    }
+  const cached = getCachedTranslation(text, src, tgt);
+  if (cached) {
+    return { ...cached, cached: true };
   }
 
-  // Japanese ↔ Luganda → English pivot via UgaJapa Bot
-  if ((from === "ja" && to === "lg") || (from === "lg" && to === "ja")) {
-    try {
-      // Prefer Sunbird for lg↔en leg when available
-      if (from === "lg") {
-        let enText: string;
-        let enginePrefix: string;
-        try {
-          enText = await sunbirdTranslate(text, "lg", "en");
-          enginePrefix = "sunbird";
-        } catch {
-          const mid = await botTranslate(text, "lg", "en");
-          enText = mid.translated;
-          enginePrefix = "ugajapa-bot";
-        }
-        const ja = await botTranslate(enText, "en", "ja");
-        return {
-          translated: ja.translated,
-          engine: `${enginePrefix}+ugajapa-bot`,
-        };
-      }
-      // ja → lg
-      const en = await botTranslate(text, "ja", "en");
-      try {
-        const lg = await sunbirdTranslate(en.translated, "en", "lg");
-        return { translated: lg, engine: "ugajapa-bot+sunbird" };
-      } catch {
-        const lg = await botTranslate(en.translated, "en", "lg");
-        return { translated: lg.translated, engine: "ugajapa-bot" };
-      }
-    } catch (err) {
-      const direct = await botTranslate(text, from, to);
-      return { translated: direct.translated, engine: "ugajapa-bot" };
-    }
-  }
-
-  // Luganda involved with other langs → Sunbird pivot via EN when possible
-  if (isLugandaPair(from, to) && from !== "en" && to !== "en") {
-    try {
-      const toEn = await sunbirdTranslate(text, from, "en");
-      const result = await botTranslate(toEn, "en", to);
-      return { translated: result.translated, engine: "sunbird+ugajapa-bot" };
-    } catch {
-      const result = await botTranslate(text, from, to);
-      return { translated: result.translated, engine: "ugajapa-bot-fallback" };
-    }
-  }
-
-  // English ↔ Acholi → UgaJapa Bot primary, Sunbird fallback
-  if ((from === "en" && to === "ach") || (from === "ach" && to === "en")) {
-    try {
-      const result = await botTranslate(text, from, to);
-      return { translated: result.translated, engine: "ugajapa-bot" };
-    } catch {
-      try {
-        const translated = await sunbirdTranslate(text, from, to);
-        return { translated, engine: "sunbird" };
-      } catch (err) {
-        throw err;
-      }
-    }
-  }
-
-  // Default: UgaJapa Bot (EN↔JA, FR, SW, etc.)
-  const result: BotTranslateResult = await botTranslate(text, from, to);
-  return { translated: result.translated, engine: "ugajapa-bot" };
-}
-
-/**
- * Optional Google fallback when confidence is low for EN↔JA (and other pairs).
- */
-export async function googleFallback(
-  text: string,
-  from: string,
-  to: string
-): Promise<RouteResult | null> {
-  if (!GOOGLE_API_KEY) return null;
-  try {
-    const translated = await googleTranslate(text, from, to);
-    return { translated, engine: "google-fallback" };
-  } catch {
-    return null;
-  }
+  const result = await translateUncached(text, src, tgt);
+  setCachedTranslation(text, src, tgt, result);
+  return { ...result, cached: false };
 }
