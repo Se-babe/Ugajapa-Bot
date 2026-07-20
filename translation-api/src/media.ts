@@ -7,8 +7,12 @@ import { routeTranslate } from "./router";
 import { transcribeAudioBuffer } from "./stt";
 import { evaluateTranslationQuality } from "./quality_eval";
 import { countCharacters, getPlanLimit } from "./usage";
+import { PDFParse } from "pdf-parse";
+import mammoth from "mammoth";
 
 export const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
+const MAX_DOC_CHARS = 100_000;
+const CHUNK_SIZE = 900;
 
 type MediaTranslateBody = {
   translated: string;
@@ -434,4 +438,176 @@ export async function videoTranslateHandler(
       error: err instanceof Error ? err.message : "Video translation failed",
     });
   }
+}
+
+async function extractDocumentText(
+  buffer: Buffer,
+  mimetype: string,
+  filename: string
+): Promise<{ text: string; pageCount?: number }> {
+  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+
+  const isPdf =
+    mimetype === "application/pdf" ||
+    (mimetype === "application/octet-stream" && ext === "pdf");
+  const isDocx =
+    mimetype ===
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    (mimetype === "application/octet-stream" && ext === "docx");
+  const isTxt =
+    mimetype.startsWith("text/") ||
+    (mimetype === "application/octet-stream" &&
+      ["txt", "md", "csv", "log"].includes(ext));
+
+  if (isPdf) {
+    const parser = new PDFParse({ data: new Uint8Array(buffer) });
+    const data = await parser.getText();
+    return { text: data.text, pageCount: data.total };
+  }
+  if (isDocx) {
+    const result = await mammoth.extractRawText({ buffer });
+    return { text: result.value };
+  }
+  if (isTxt) {
+    return { text: buffer.toString("utf8") };
+  }
+
+  throw new Error(
+    `Unsupported document type: ${mimetype || ext || "unknown"}. ` +
+      "Supported formats: PDF (.pdf), Word (.docx), plain text (.txt, .md, .csv)"
+  );
+}
+
+function chunkText(text: string): string[] {
+  const paragraphs = text.split(/\n{2,}/);
+  const chunks: string[] = [];
+
+  for (const para of paragraphs) {
+    const trimmed = para.trim();
+    if (!trimmed) continue;
+
+    if (trimmed.length <= CHUNK_SIZE) {
+      chunks.push(trimmed);
+    } else {
+      const sentences = trimmed.split(/(?<=[.!?।])\s+/);
+      let current = "";
+      for (const sentence of sentences) {
+        if (current && current.length + sentence.length + 1 > CHUNK_SIZE) {
+          chunks.push(current);
+          current = sentence;
+        } else {
+          current = current ? current + " " + sentence : sentence;
+        }
+      }
+      if (current) chunks.push(current);
+    }
+  }
+
+  return chunks;
+}
+
+export async function documentTranslateHandler(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const file = req.file;
+  if (!file?.buffer?.length) {
+    res.status(400).json({
+      error: "file is required (multipart/form-data field: file)",
+    });
+    return;
+  }
+
+  const to = String(req.body?.to || "").trim();
+  const from = String(req.body?.from || "").trim() || undefined;
+  if (!to) {
+    res.status(400).json({ error: "to (target language) is required" });
+    return;
+  }
+  if (!(await isSupportedLanguage(to))) {
+    res.status(400).json({
+      error: `Unsupported target language: ${to}`,
+      hint: "Call GET /languages for the full list",
+    });
+    return;
+  }
+  if (from && !(await isSupportedLanguage(from))) {
+    res.status(400).json({
+      error: `Unsupported source language: ${from}`,
+      hint: "Call GET /languages for the full list",
+    });
+    return;
+  }
+
+  let extracted: { text: string; pageCount?: number };
+  try {
+    extracted = await extractDocumentText(
+      file.buffer,
+      file.mimetype,
+      file.originalname || "document"
+    );
+  } catch (err) {
+    res.status(400).json({
+      error: err instanceof Error ? err.message : "Failed to extract document text",
+    });
+    return;
+  }
+
+  const rawText = extracted.text.trim();
+  if (!rawText) {
+    res.status(422).json({ error: "No text content found in the document" });
+    return;
+  }
+  if (rawText.length > MAX_DOC_CHARS) {
+    res.status(413).json({
+      error: `Document too long (${rawText.length} characters). Maximum is ${MAX_DOC_CHARS}.`,
+    });
+    return;
+  }
+
+  if (req.apiKey) {
+    const ok = await checkQuota(req, res, countCharacters(rawText));
+    if (!ok) return;
+  }
+
+  const sourceLang = normalizeTranslationCode(
+    from?.trim() || (await detectLanguage(rawText)).language
+  );
+  const targetLang = normalizeTranslationCode(to);
+
+  const chunks = chunkText(rawText);
+  const translatedChunks: string[] = [];
+  let lastEngine = "ugajapa-bot";
+
+  try {
+    for (const chunk of chunks) {
+      const result = await routeTranslate(chunk, sourceLang, targetLang);
+      translatedChunks.push(result.translated);
+      lastEngine = result.engine;
+    }
+  } catch (err) {
+    console.error("Document translation error:", err);
+    res.status(502).json({
+      error: err instanceof Error ? err.message : "Translation failed",
+    });
+    return;
+  }
+
+  const translatedText = translatedChunks.join("\n\n");
+
+  if (req.apiKey) {
+    await recordUsage(req, rawText, sourceLang, to, lastEngine, 1.0);
+  }
+
+  res.json({
+    filename: file.originalname || "document",
+    page_count: extracted.pageCount,
+    char_count: rawText.length,
+    chunk_count: chunks.length,
+    from: sourceLang,
+    to: targetLang,
+    engine: lastEngine,
+    origin: rawText,
+    translated: translatedText,
+  });
 }

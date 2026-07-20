@@ -26,7 +26,7 @@ export async function botTranslate(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, from_lang: fromLang, to_lang: toLang }),
-    signal: AbortSignal.timeout(60_000),
+    signal: AbortSignal.timeout(5_000),
   });
 
   if (!res.ok) {

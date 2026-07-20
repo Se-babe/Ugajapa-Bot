@@ -59,6 +59,7 @@ import {
   synthesizeHandler,
   audioTranslateHandler,
   videoTranslateHandler,
+  documentTranslateHandler,
 } from "./media";
 
 const PORT = parseInt(process.env.PORT || "5000", 10);
@@ -198,6 +199,13 @@ app.post(
   asyncHandler(requireApiKey),
   upload.single("file"),
   asyncHandler(videoTranslateHandler)
+);
+app.post(
+  "/document/translate",
+  translateLimiter,
+  asyncHandler(requireApiKey),
+  upload.single("file"),
+  asyncHandler(documentTranslateHandler)
 );
 
 // Usage & billing

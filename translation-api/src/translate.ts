@@ -131,6 +131,9 @@ export async function translateHandler(req: Request, res: Response): Promise<voi
       from: fromNorm || from,
       to: toNorm,
       detected_from: detectedFrom ?? null,
+      // The actual routing engine (Groq/Google/bot) is an internal
+      // implementation detail — recorded in usage_records for analytics,
+      // but never exposed to clients. Every response is branded as the bot.
       engine: "ugajapa-bot",
       quality,
       score: quality.score,

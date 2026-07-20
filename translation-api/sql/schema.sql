@@ -103,3 +103,25 @@ CREATE TABLE IF NOT EXISTS login_events (
 
 CREATE INDEX IF NOT EXISTS idx_login_events_user ON login_events(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_login_events_created ON login_events(created_at DESC);
+
+-- Training data accumulated from every translation request.
+-- nllb_output    = what the on-device NLLB-200 model produced
+-- teacher_output = best result from Google/Groq (the "ground truth" for learning)
+-- teacher_engine = which external engine produced the ground truth
+-- used_teacher   = TRUE when the teacher result was served to the user (bot quality was lower)
+CREATE TABLE IF NOT EXISTS translation_pairs (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  from_lang      VARCHAR(16) NOT NULL,
+  to_lang        VARCHAR(16) NOT NULL,
+  source_text    TEXT        NOT NULL,
+  nllb_output    TEXT,
+  teacher_output TEXT        NOT NULL,
+  teacher_engine VARCHAR(32) NOT NULL,
+  quality_score  FLOAT,
+  used_teacher   BOOLEAN     NOT NULL DEFAULT FALSE,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tp_langs   ON translation_pairs(from_lang, to_lang);
+CREATE INDEX IF NOT EXISTS idx_tp_quality ON translation_pairs(quality_score DESC NULLS LAST);
+CREATE INDEX IF NOT EXISTS idx_tp_created ON translation_pairs(created_at DESC);

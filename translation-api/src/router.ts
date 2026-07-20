@@ -49,7 +49,7 @@ async function groqTranslate(
         { role: "user", content: text },
       ],
     }),
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(8_000),
   });
 
   if (!res.ok) {
@@ -89,7 +89,7 @@ async function googleTranslate(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(5_000),
   });
 
   if (!res.ok) {
@@ -103,12 +103,28 @@ async function googleTranslate(
   return data.data.translations[0].translatedText;
 }
 
+function isPassthrough(source: string, translated: string): boolean {
+  const s = source.trim().toLowerCase().replace(/\s+/g, " ");
+  const t = translated.trim().toLowerCase().replace(/\s+/g, " ");
+  if (s === t) return true;
+  // Levenshtein ratio > 0.92 means barely changed — treat as no-op
+  const longer = Math.max(s.length, t.length);
+  if (longer === 0) return false;
+  let same = 0;
+  const minLen = Math.min(s.length, t.length);
+  for (let i = 0; i < minLen; i++) if (s[i] === t[i]) same++;
+  return same / longer > 0.92;
+}
+
 async function botFallback(
   text: string,
   from: string,
   to: string
 ): Promise<RouteResult> {
   const result: BotTranslateResult = await botTranslate(text, from, to);
+  if (isPassthrough(text, result.translated)) {
+    throw new Error(`ugajapa-bot produced no translation for ${from}→${to}`);
+  }
   return { translated: result.translated, engine: "ugajapa-bot-fallback" };
 }
 
@@ -117,6 +133,13 @@ type EngineStep = {
   run: () => Promise<RouteResult>;
 };
 
+/**
+ * Three-tier engine ordering — change only this function to reorder/add
+ * engines. Ugandan languages and Japanese get Groq first, since it's
+ * meaningfully better on those than Google (Google is generally faster and
+ * fine everywhere else, so it leads for the rest). ugajapa-bot (NLLB-200)
+ * is always the last resort, on every tier.
+ */
 function engineChain(
   text: string,
   from: string,
@@ -125,43 +148,32 @@ function engineChain(
   const chain: EngineStep[] = [];
   const ugandan = UGANDAN_LANGS.has(from) || UGANDAN_LANGS.has(to);
   const japanese = from === "ja" || to === "ja";
+  const groqFirst = ugandan || japanese;
 
-  // Regional / Japanese pairs: neural engine first for quality.
-  if (ugandan || japanese) {
-    if (GROQ_API_KEY) {
-      chain.push({
-        name: "groq",
-        run: async () => ({
-          translated: await groqTranslate(text, from, to),
-          engine: "groq",
-        }),
-      });
-    }
+  const googleStep: EngineStep = {
+    name: "google",
+    run: async () => ({
+      translated: await googleTranslate(text, from, to),
+      engine: "google",
+    }),
+  };
+  const groqStep: EngineStep = {
+    name: "groq",
+    run: async () => ({
+      translated: await groqTranslate(text, from, to),
+      engine: "groq",
+    }),
+  };
+
+  if (groqFirst) {
+    if (GROQ_API_KEY) chain.push(groqStep);
+    if (GOOGLE_API_KEY) chain.push(googleStep);
+  } else {
+    if (GOOGLE_API_KEY) chain.push(googleStep);
+    if (GROQ_API_KEY) chain.push(groqStep);
   }
 
-  // Global engine — covers all 197+ world languages for every pair.
-  if (GOOGLE_API_KEY) {
-    chain.push({
-      name: "google",
-      run: async () => ({
-        translated: await googleTranslate(text, from, to),
-        engine: ugandan || japanese ? "google-fallback" : "google",
-      }),
-    });
-  }
-
-  // Non-regional pairs: neural engine as secondary fallback.
-  if (!ugandan && !japanese && GROQ_API_KEY) {
-    chain.push({
-      name: "groq-fallback",
-      run: async () => ({
-        translated: await groqTranslate(text, from, to),
-        engine: "groq-fallback",
-      }),
-    });
-  }
-
-  // On-platform resilient fallback.
+  // ugajapa-bot (NLLB-200) as last resort, every tier.
   chain.push({
     name: "ugajapa-bot",
     run: () => botFallback(text, from, to),
