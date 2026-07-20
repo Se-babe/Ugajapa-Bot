@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS users (
   full_name VARCHAR(255) NOT NULL,
   plan VARCHAR(50) NOT NULL DEFAULT 'free',
   stripe_customer_id VARCHAR(255),
+  stripe_subscription_id VARCHAR(255),
+  stripe_subscription_status VARCHAR(50),
+  stripe_current_period_end TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   active BOOLEAN NOT NULL DEFAULT TRUE,
   email_verified BOOLEAN NOT NULL DEFAULT TRUE,
@@ -70,6 +73,7 @@ CREATE TABLE IF NOT EXISTS billing (
   paid BOOLEAN NOT NULL DEFAULT FALSE,
   stripe_session_id VARCHAR(255),
   stripe_payment_intent_id VARCHAR(255),
+  paid_at TIMESTAMPTZ,
   generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (user_id, month)
 );

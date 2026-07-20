@@ -90,8 +90,15 @@ curl -s -X POST http://localhost:5000/translate \
 | GET | `/health` | — |
 | GET | `/usage/summary` | JWT |
 | GET | `/usage/history` | JWT |
-| GET | `/billing/:month` | JWT |
 | GET | `/billing` | JWT |
+| GET | `/billing/config` | — |
+| GET | `/billing/:month` | JWT |
+| GET | `/billing/checkout/status` | JWT |
+| POST | `/billing/plan` | JWT (→ Stripe Checkout) |
+| POST | `/billing/checkout/plan` | JWT |
+| POST | `/billing/checkout/invoice` | JWT |
+| POST | `/billing/portal` | JWT |
+| POST | `/billing/webhook` | Stripe signature |
 | GET | `/admin/*` | Admin JWT |
 
 ## Engine routing

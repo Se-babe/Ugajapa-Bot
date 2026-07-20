@@ -267,6 +267,26 @@
   .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
   .badge.active, .badge.up { background: #e6f4ec; color: var(--green); }
   .badge.revoked, .badge.down { background: #fbe9e7; color: var(--red); }
+  .badge.idle { background: #eef1f4; color: var(--muted); font-weight: 500; }
+  .status-strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 14px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .status-strip .dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .status-strip .dot.on { background: var(--green); }
+  .status-strip .dot.off { background: #c5ccd4; }
+  .status-strip .sep { color: var(--border); }
   .engine-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
   .engine-tile {
     border: 1px solid var(--border);
@@ -379,6 +399,54 @@
   .upgrade-card h4 { margin: 0 0 6px; font-size: 14px; color: var(--navy); }
   .upgrade-card .price { font-size: 20px; font-weight: 600; color: var(--navy); margin: 8px 0; }
   .upgrade-card p { margin: 0 0 12px; font-size: 12px; color: var(--muted); line-height: 1.4; }
+  .billing-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .upgrade-list {
+    display: grid;
+    gap: 10px;
+    margin-top: 4px;
+  }
+  .upgrade-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fafbfc;
+  }
+  .upgrade-row.current {
+    border-color: var(--accent);
+    background: #f0faf4;
+  }
+  .upgrade-row .meta strong {
+    display: block;
+    color: var(--navy);
+    font-size: 14px;
+  }
+  .upgrade-row .meta span {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .upgrade-row button {
+    flex-shrink: 0;
+    margin: 0;
+  }
+  button.linkish {
+    background: none;
+    border: none;
+    color: var(--navy);
+    text-decoration: underline;
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+    font-size: inherit;
+  }
   .quota-warn {
     margin-top: 12px;
     padding: 10px 12px;
@@ -388,6 +456,33 @@
     font-size: 13px;
     color: #7a5c00;
   }
+  .quota-alert {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 14px 16px;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    font-size: 14px;
+  }
+  .quota-alert.error {
+    background: #fef2f2;
+    border: 1px solid #f5c2c2;
+    color: #8b2e2e;
+  }
+  .quota-alert.warning {
+    background: #fff8e6;
+    border: 1px solid #f0d878;
+    color: #7a5c00;
+  }
+  .quota-alert .quota-alert-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .quota-alert p { margin: 4px 0 0; font-size: 13px; opacity: .9; }
 </style>
 <style id="uga-auth-theme">
   /* Dark split-screen login/signup — scoped to the pre-login view only.
@@ -634,11 +729,7 @@
 
       <div class="dash-content">
     <div id="panel-overview" class="dash-panel active">
-      <div class="card">
-        <h2>Platform status</h2>
-        <p class="muted" style="margin:-8px 0 14px;">Live health of UgaJapa translation services.</p>
-        <div id="engineGrid" class="engine-grid muted">Loading platform status…</div>
-      </div>
+      <div id="quotaAlertBox"></div>
 
       <div class="card">
         <h2>Usage this month</h2>
@@ -647,6 +738,19 @@
           <span id="usagePlan" class="muted">—</span>
         </div>
         <div class="bar-track"><div class="bar-fill" id="usageBar" style="width:0%"></div></div>
+        <p id="planPeriodText" class="muted" style="margin:10px 0 0;font-size:12px;">—</p>
+      </div>
+
+      <div class="card">
+        <h2>Billing</h2>
+        <div id="billingBox" class="muted">—</div>
+        <div style="margin-top:16px;">
+          <h3 style="margin:0 0 8px;">Billing history</h3>
+          <table>
+            <thead><tr><th>Month</th><th>Characters</th><th>Amount</th><th>Status</th></tr></thead>
+            <tbody id="overviewBillingHistory"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+          </table>
+        </div>
       </div>
 
       <div class="card">
@@ -657,10 +761,11 @@
         </table>
       </div>
 
-      <div class="card">
-        <h2>Billing — current month</h2>
-        <div id="billingBox" class="muted">—</div>
-        <div id="upgradeBox"></div>
+      <div class="card" style="padding:14px 18px;">
+        <div class="row" style="margin-bottom:0;">
+          <h2 style="margin:0;font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;">Status</h2>
+          <div id="engineGrid" class="status-strip muted">Checking…</div>
+        </div>
       </div>
     </div>
 
@@ -795,24 +900,35 @@
       <div id="settings-billing" class="settings-section">
         <div class="page-header">
           <h2>Billing</h2>
-          <p>Monthly usage charges and payment status.</p>
+          <p>Your plan and card payments.</p>
         </div>
         <div class="card">
           <div class="settings-field">
-            <label>Current month</label>
+            <label>Current plan</label>
+            <div id="setBillingPlan" class="field-value">—</div>
+            <div id="setBillingPeriod" class="muted" style="margin-top:6px;font-size:12px;">—</div>
+          </div>
+          <div id="setBillingQuotaAlert"></div>
+          <div class="settings-field">
+            <label>This month</label>
             <div id="setBillingCurrent" class="field-value">—</div>
+            <div id="setBillingActions" class="billing-actions"></div>
           </div>
           <div class="settings-field">
+            <label>Change plan</label>
+            <div id="setUpgradeBox" class="upgrade-list muted">Loading…</div>
+          </div>
+          <div class="settings-field" id="setBillingHistoryWrap">
             <label>Billing history</label>
             <table class="audit-table">
-              <thead><tr><th>Month</th><th>Characters</th><th>Amount</th><th>Status</th></tr></thead>
+              <thead><tr><th>Month</th><th>Amount</th><th>Status</th><th></th></tr></thead>
               <tbody id="setBillingHistory"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
             </table>
           </div>
-          <div class="settings-field">
-            <label>Upgrade plan</label>
-            <div id="setUpgradeBox" class="upgrade-grid muted">Loading…</div>
-          </div>
+          <p class="muted" style="margin:16px 0 0;font-size:12px;">
+            Card payments only via Stripe.
+            <button type="button" class="linkish" id="setManageCardBtn">Manage card</button>
+          </p>
         </div>
       </div>
 
@@ -1019,6 +1135,8 @@
     if (!res.ok) {
       const err = new Error(data.error || data.detail || ("HTTP " + res.status));
       if (data.code) err.code = data.code;
+      if (data.hint) err.hint = data.hint;
+      if (data.upgrade_plan) err.upgrade_plan = data.upgrade_plan;
       throw err;
     }
     return data;
@@ -1196,47 +1314,129 @@
   function renderBillingBreakdown(b) {
     if (!b?.billing) return "";
     const bd = b.billing;
+    const due = b.payable_usd ?? bd.total_usd;
+    if (due <= 0 && bd.base_usd <= 0 && bd.overage_usd <= 0) return "";
     return `
       <div class="billing-breakdown">
-        <div class="row"><span>Plan subscription</span><span>$${bd.base_usd.toFixed(2)}</span></div>
-        <div class="row"><span>Overage (${bd.overage_characters.toLocaleString()} chars)</span><span>$${bd.overage_usd.toFixed(2)}</span></div>
-        <div class="row" style="font-weight:600;border-top:1px solid var(--border);padding-top:8px;margin-top:4px;">
-          <span>Estimated total</span><span>$${bd.total_usd.toFixed(2)}</span>
+        ${bd.base_usd > 0 ? `<div class="row"><span>Plan</span><span>$${bd.base_usd.toFixed(2)}</span></div>` : ""}
+        ${bd.overage_usd > 0 ? `<div class="row"><span>Overage</span><span>$${bd.overage_usd.toFixed(2)}</span></div>` : ""}
+        <div class="row" style="font-weight:600;">
+          <span>${b.paid ? "Paid" : "Due"}</span>
+          <span>$${due.toFixed(2)}</span>
         </div>
       </div>`;
   }
 
-  function renderUpgradeCards(currentPlan, containerId) {
+  async function startPlanCheckout(plan) {
+    const cfg = await api("/billing/config").catch(() => ({ stripe_enabled: false }));
+    if (!cfg.stripe_enabled) {
+      throw new Error("Card payments are not configured. Add STRIPE_SECRET_KEY to enable upgrades.");
+    }
+    const r = await api("/billing/checkout/plan", {
+      method: "POST",
+      body: JSON.stringify({ plan }),
+    });
+    if (r.checkout_url) {
+      window.location.href = r.checkout_url;
+      return;
+    }
+    throw new Error(r.error || "Could not start card checkout");
+  }
+
+  async function startInvoiceCheckout(month) {
+    const r = await api("/billing/checkout/invoice", {
+      method: "POST",
+      body: JSON.stringify({ month }),
+    });
+    if (r.checkout_url) {
+      window.location.href = r.checkout_url;
+      return;
+    }
+    throw new Error(r.error || "Could not start card checkout");
+  }
+
+  async function openBillingPortal() {
+    const r = await api("/billing/portal", { method: "POST", body: "{}" });
+    if (r.portal_url) {
+      window.location.href = r.portal_url;
+      return;
+    }
+    throw new Error(r.error || "Could not open billing portal");
+  }
+
+  function renderPayButton(month, payableUsd, stripeEnabled) {
+    if (!stripeEnabled || payableUsd <= 0) return "";
+    return `<button type="button" class="accent pay-invoice-btn" data-month="${escapeHtml(month)}">Pay $${payableUsd.toFixed(2)}</button>`;
+  }
+
+  function bindPayButtons(container) {
+    container?.querySelectorAll(".pay-invoice-btn").forEach((btn) => {
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try {
+          await startInvoiceCheckout(btn.dataset.month);
+        } catch (err) {
+          alert(err.message);
+          btn.disabled = false;
+        }
+      };
+    });
+  }
+
+  function renderUpgradeCards(currentPlan, containerId, stripeEnabled) {
     const el = $(containerId);
     if (!el) return;
     const order = ["free", "starter", "business", "enterprise"];
     const currentIdx = order.indexOf(currentPlan);
-    el.innerHTML = order.map((code) => {
+    const paymentsReady = stripeEnabled !== false;
+    const rows = [];
+
+    const current = PLAN_INFO[currentPlan] || PLAN_INFO.free;
+    rows.push(`
+      <div class="upgrade-row current">
+        <div class="meta">
+          <strong>${escapeHtml(current.label)} · Current</strong>
+          <span>${escapeHtml(current.price)} · ${escapeHtml(current.chars)} chars/mo</span>
+        </div>
+      </div>`);
+
+    for (const code of ["starter", "business"]) {
+      if (order.indexOf(code) <= currentIdx) continue;
       const p = PLAN_INFO[code];
-      const isCurrent = code === currentPlan;
-      const canUpgrade = order.indexOf(code) > currentIdx && code !== "enterprise";
-      return `
-        <div class="upgrade-card${isCurrent ? " current" : ""}">
-          <h4>${escapeHtml(p.label)}${isCurrent ? " · Current" : ""}</h4>
-          <div class="price">${escapeHtml(p.price)}</div>
-          <p>${escapeHtml(p.chars)} characters included${code === "starter" ? " · $0.50 per 10k overage" : code === "business" ? " · $0.30 per 10k overage" : ""}</p>
-          ${canUpgrade ? `<button class="accent upgrade-btn" data-plan="${code}">Upgrade to ${escapeHtml(p.label)}</button>` : ""}
-          ${code === "enterprise" && currentPlan !== "enterprise" ? `<p class="muted">Contact <a href="mailto:support@ugajapa.ac.ug">support@ugajapa.ac.ug</a></p>` : ""}
-        </div>`;
-    }).join("");
+      const action = paymentsReady
+        ? `<button class="accent upgrade-btn" data-plan="${code}">Upgrade</button>`
+        : `<span class="muted">Stripe required</span>`;
+      rows.push(`
+        <div class="upgrade-row">
+          <div class="meta">
+            <strong>${escapeHtml(p.label)} — ${escapeHtml(p.price)}</strong>
+            <span>${escapeHtml(p.chars)} chars/mo</span>
+          </div>
+          ${action}
+        </div>`);
+    }
+
+    if (currentPlan !== "enterprise") {
+      rows.push(`
+        <div class="upgrade-row">
+          <div class="meta">
+            <strong>Enterprise</strong>
+            <span>Custom · unlimited</span>
+          </div>
+          <a href="mailto:support@ugajapa.ac.ug" class="muted" style="font-size:12px;">Contact</a>
+        </div>`);
+    }
+
+    el.innerHTML = rows.join("");
     el.querySelectorAll(".upgrade-btn").forEach((btn) => {
       btn.onclick = async () => {
-        if (!confirm(`Upgrade to ${btn.dataset.plan} plan? Charges apply from usage this month.`)) return;
+        if (!confirm(`Upgrade to ${btn.dataset.plan}? Continue to card payment.`)) return;
+        btn.disabled = true;
         try {
-          const r = await api("/billing/plan", {
-            method: "POST",
-            body: JSON.stringify({ plan: btn.dataset.plan }),
-          });
-          alert(r.message);
-          settingsLoaded = false;
-          loadAll();
+          await startPlanCheckout(btn.dataset.plan);
         } catch (err) {
           alert(err.message);
+          btn.disabled = false;
         }
       };
     });
@@ -1247,12 +1447,13 @@
   async function loadSettings() {
     if (settingsLoaded) return;
     try {
-      const [profile, usage, history, billing, keys] = await Promise.all([
+      const [profile, usage, history, billing, keys, billingCfg] = await Promise.all([
         api("/auth/me"),
         api("/usage/summary"),
         api("/usage/history"),
         api("/billing").catch(() => ({ bills: [] })),
         api("/keys"),
+        api("/billing/config").catch(() => ({ stripe_enabled: false })),
       ]);
 
       const plan = profile.plan || "free";
@@ -1303,30 +1504,54 @@
       }
 
       const month = new Date().toISOString().slice(0, 7);
+      $("setBillingPlan").textContent = planInfo.label + " · " + planInfo.price;
+      $("setBillingPeriod").textContent = formatPeriodLabel(usage.plan_period_label, usage.plan_period_end);
+      renderQuotaAlert(usage, "setBillingQuotaAlert");
       try {
         const current = await api("/billing/" + month);
+        const due = current.payable_usd ?? current.amount_usd;
+        const statusLabel = current.paid ? "Paid" : (due > 0 ? "Due" : "Nothing owed");
         $("setBillingCurrent").innerHTML =
-          current.characters_total.toLocaleString() + " characters · $" +
-          current.amount_usd.toFixed(2) + " · " + (current.paid ? "Paid" : "Estimated") +
+          current.characters_total.toLocaleString() + " characters · " + statusLabel +
           renderBillingBreakdown(current);
+        const actions = $("setBillingActions");
+        actions.innerHTML = renderPayButton(month, due || 0, current.stripe_enabled);
+        bindPayButtons(actions);
       } catch {
         $("setBillingCurrent").textContent = "No charges this month.";
+        $("setBillingActions").innerHTML = "";
       }
 
-      renderUpgradeCards(plan, "setUpgradeBox");
+      const manageBtn = $("setManageCardBtn");
+      if (manageBtn) {
+        manageBtn.onclick = async () => {
+          manageBtn.disabled = true;
+          try {
+            await openBillingPortal();
+          } catch (err) {
+            alert(err.message);
+            manageBtn.disabled = false;
+          }
+        };
+      }
 
-      const bh = $("setBillingHistory");
+      renderUpgradeCards(plan, "setUpgradeBox", billingCfg.stripe_enabled);
+
       const bills = billing.bills || [];
+      const bh = $("setBillingHistory");
       if (!bills.length) {
-        bh.innerHTML = '<tr><td colspan="4" class="muted">No billing records yet.</td></tr>';
+        bh.innerHTML = '<tr><td colspan="4" class="muted">No invoices yet. Charges appear after usage and payments.</td></tr>';
       } else {
         bh.innerHTML = bills.map((b) => `
           <tr>
             <td>${escapeHtml(b.month)}</td>
-            <td>${b.characters_total.toLocaleString()}</td>
-            <td>$${b.amount_usd.toFixed(2)}</td>
-            <td>${b.paid ? "Paid" : "Unpaid"}</td>
+            <td>$${(b.payable_usd ?? b.amount_usd).toFixed(2)}</td>
+            <td>${b.paid ? "Paid" : ((b.payable_usd ?? b.amount_usd) > 0 ? "Unpaid" : "—")}</td>
+            <td>${b.paid || !((b.payable_usd ?? 0) > 0 && billing.stripe_enabled)
+              ? ""
+              : `<button type="button" class="secondary pay-invoice-btn" data-month="${escapeHtml(b.month)}">Pay</button>`}</td>
           </tr>`).join("");
+        bindPayButtons(bh);
       }
 
       $("setTeamBody").innerHTML = `
@@ -1392,6 +1617,7 @@
     $("authView").style.display = "none";
     $("dashView").style.display = "block";
     $("logoutBtn").style.display = "inline-block";
+    handleBillingReturnQuery();
     loadAll();
   }
 
@@ -1508,26 +1734,85 @@
     showAuth();
   };
 
+  function formatPeriodLabel(label, endIso) {
+    if (!endIso) return "—";
+    const date = new Date(endIso).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+    if (label === "renews") return "Plan renews on " + date;
+    if (label === "expires") return "Plan expires on " + date;
+    return "Quota resets on " + date;
+  }
+
+  function goToBillingUpgrade() {
+    enterSettingsNav();
+    showSettingsSection("billing");
+    settingsLoaded = false;
+    loadSettings();
+  }
+
+  function renderQuotaAlert(u, containerId) {
+    const el = $(containerId);
+    if (!el) return;
+    if (!u.notification) {
+      el.innerHTML = "";
+      return;
+    }
+    const n = u.notification;
+    const canUpgrade = Boolean(u.upgrade_plan && u.stripe_enabled);
+    el.innerHTML = `
+      <div class="quota-alert ${escapeHtml(n.level)}">
+        <div>
+          <strong>${escapeHtml(n.title)}</strong>
+          <p>${escapeHtml(n.message)}</p>
+        </div>
+        <div class="quota-alert-actions">
+          ${canUpgrade
+            ? `<button type="button" class="accent quota-upgrade-btn" data-plan="${escapeHtml(u.upgrade_plan)}">${escapeHtml(n.action)}</button>`
+            : `<button type="button" class="secondary" id="quotaGotoBilling">${escapeHtml(n.action)}</button>`}
+        </div>
+      </div>`;
+    el.querySelectorAll(".quota-upgrade-btn").forEach((btn) => {
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try {
+          await startPlanCheckout(btn.dataset.plan);
+        } catch (err) {
+          alert(err.message);
+          btn.disabled = false;
+          goToBillingUpgrade();
+        }
+      };
+    });
+    const goto = $("quotaGotoBilling");
+    if (goto) goto.onclick = () => goToBillingUpgrade();
+  }
+
   async function loadEngines() {
     try {
       const h = await fetch(API + "/health").then((r) => r.json());
-      const tile = (name, up, detail, featured) => `
-        <div class="engine-tile${featured ? " featured" : ""}">
-          <div class="row"><h4>${escapeHtml(name)}</h4>
-          <span class="badge ${up ? "up" : "down"}">${up ? "Online" : "Offline"}</span></div>
-          <p>${escapeHtml(detail)}</p>
-        </div>`;
+      const coreOk = h.database === "up";
+      const botOk = h.bot === "up";
+      const cloud = [
+        h.groq_llm,
+        h.groq_whisper,
+        h.google_translate,
+        h.google_speech,
+        h.google_tts,
+      ].filter(Boolean).length;
+      const item = (label, on) =>
+        `<span><span class="dot ${on ? "on" : "off"}"></span>${escapeHtml(label)}</span>`;
       $("engineGrid").innerHTML = [
-        tile("UgaJapa Neural Engine", h.groq_llm, "AI translation for regional & complex pairs", true),
-        tile("UgaJapa Voice Engine", h.groq_whisper, "Speech recognition & transcription", true),
-        tile("UgaJapa Global Engine", h.google_translate, "197 languages worldwide", false),
-        tile("UgaJapa Listen", h.google_speech, "Voice-to-text processing", false),
-        tile("UgaJapa Speak", h.google_tts, "Text-to-speech synthesis", false),
-        tile("UgaJapa Bot", h.bot === "up", "On-platform resilient fallback", false),
-        tile("UgaJapa Platform", h.database === "up", "Accounts, usage & billing", false),
+        item("API", coreOk),
+        `<span class="sep">·</span>`,
+        item("Bot", botOk),
+        `<span class="sep">·</span>`,
+        `<span>${cloud}/5 cloud engines configured</span>`,
       ].join("");
     } catch {
-      $("engineGrid").textContent = "Unable to load platform status.";
+      $("engineGrid").textContent = "Status unavailable";
     }
   }
 
@@ -1540,21 +1825,9 @@
       u.characters_used.toLocaleString() + " / " + limitText + " characters used this month";
     const pct = u.characters_limit ? Math.min(100, (u.characters_used / u.characters_limit) * 100) : 5;
     $("usageBar").style.width = pct + "%";
-    $("usageBar").style.background = u.quota_exceeded ? "var(--red)" : "var(--navy)";
-
-    const warnEl = $("usageQuotaWarn");
-    if (warnEl) warnEl.remove();
-    if (u.quota_exceeded || (u.characters_limit && u.characters_used / u.characters_limit >= 0.85)) {
-      const warn = document.createElement("div");
-      warn.id = "usageQuotaWarn";
-      warn.className = "quota-warn";
-      warn.innerHTML = u.quota_exceeded
-        ? "<strong>Quota exceeded.</strong> Upgrade your plan to continue translating and avoid service interruption."
-        : "<strong>Approaching quota limit.</strong> Consider upgrading before you hit your monthly cap.";
-      $("usageBar").parentElement?.appendChild(warn);
-    }
-
-    renderUpgradeCards(u.plan, "upgradeBox");
+    $("usageBar").style.background = u.quota_exceeded ? "var(--red)" : (u.quota_warning ? "var(--amber)" : "var(--navy)");
+    $("planPeriodText").textContent = formatPeriodLabel(u.plan_period_label, u.plan_period_end);
+    renderQuotaAlert(u, "quotaAlertBox");
   }
 
   async function loadUsageHistory() {
@@ -1607,16 +1880,94 @@
   async function loadBilling() {
     const month = new Date().toISOString().slice(0, 7);
     try {
-      const b = await api("/billing/" + month);
+      const [b, history, usage] = await Promise.all([
+        api("/billing/" + month),
+        api("/billing").catch(() => ({ bills: [] })),
+        api("/usage/summary").catch(() => null),
+      ]);
+      const due = b.payable_usd ?? b.amount_usd;
+      const statusLabel = b.paid ? "Paid" : (due > 0 ? "Due" : "Nothing owed");
+      const periodLine = usage
+        ? formatPeriodLabel(usage.plan_period_label, usage.plan_period_end)
+        : "";
       $("billingBox").innerHTML = `
         <div class="row">
-          <span>${b.characters_total.toLocaleString()} characters translated</span>
-          <span>$${b.amount_usd.toFixed(2)} — ${b.paid ? "Paid" : "Estimated"}</span>
+          <span>${b.characters_total.toLocaleString()} characters</span>
+          <span>${statusLabel}${due > 0 ? " · $" + due.toFixed(2) : ""}</span>
         </div>
-        ${renderBillingBreakdown(b)}`;
+        ${periodLine ? `<p class="muted" style="margin:8px 0 0;font-size:12px;">${escapeHtml(periodLine)}</p>` : ""}
+        ${renderBillingBreakdown(b)}
+        <div class="billing-actions" id="dashBillingActions"></div>`;
+      const actions = $("dashBillingActions");
+      actions.innerHTML = renderPayButton(month, due || 0, b.stripe_enabled);
+      if (usage?.upgrade_plan && (usage.quota_exceeded || usage.quota_warning) && usage.stripe_enabled) {
+        actions.innerHTML += `<button type="button" class="accent" id="overviewUpgradeBtn">Upgrade to ${escapeHtml(usage.upgrade_plan)}</button>`;
+        const up = $("overviewUpgradeBtn");
+        if (up) {
+          up.onclick = async () => {
+            up.disabled = true;
+            try { await startPlanCheckout(usage.upgrade_plan); }
+            catch (err) { alert(err.message); up.disabled = false; }
+          };
+        }
+      }
+      bindPayButtons(actions);
+
+      const body = $("overviewBillingHistory");
+      const bills = history.bills || [];
+      if (!bills.length) {
+        body.innerHTML = '<tr><td colspan="4" class="muted">No invoices yet.</td></tr>';
+      } else {
+        body.innerHTML = bills.map((row) => `
+          <tr>
+            <td>${escapeHtml(row.month)}</td>
+            <td>${row.characters_total.toLocaleString()}</td>
+            <td>$${(row.payable_usd ?? row.amount_usd).toFixed(2)}</td>
+            <td>${row.paid ? "Paid" : ((row.payable_usd ?? row.amount_usd) > 0 ? "Unpaid" : "—")}</td>
+          </tr>`).join("");
+      }
     } catch (err) {
       $("billingBox").textContent = "Unable to load billing: " + err.message;
     }
+  }
+
+  async function handleBillingReturnQuery() {
+    const params = new URLSearchParams(window.location.search);
+    const billing = params.get("billing");
+    const sessionId = params.get("session_id");
+    if (!billing) return;
+
+    if ((billing === "success" || billing === "paid") && sessionId && token) {
+      try {
+        const confirmed = await api("/billing/checkout/confirm", {
+          method: "POST",
+          body: JSON.stringify({ session_id: sessionId }),
+        });
+        alert(
+          confirmed.plan
+            ? `Payment confirmed. Your plan is now ${confirmed.plan}.`
+            : (confirmed.message || "Payment confirmed.")
+        );
+      } catch (err) {
+        alert(
+          (err && err.message) ||
+            "Payment was received by Stripe, but plan confirmation failed. Refresh and try again, or contact support."
+        );
+      }
+    } else if (billing === "success") {
+      alert("Plan upgrade successful. Refresh the page if your plan does not update.");
+    } else if (billing === "paid") {
+      alert("Payment received. Thank you.");
+    } else if (billing === "cancelled") {
+      alert("Checkout cancelled — no charge was made.");
+    }
+
+    if (params.get("settings") === "billing" || billing) {
+      enterSettingsNav();
+      showSettingsSection("billing");
+    }
+    window.history.replaceState({}, "", window.location.pathname);
+    settingsLoaded = false;
   }
 
   function fillLangSelects() {
@@ -1711,7 +2062,24 @@ curl ${base}/languages -s \\
       loadUsage();
       loadUsageHistory();
     } catch (err) {
-      $("playError").textContent = err.message;
+      if (err.code === "QUOTA_EXCEEDED") {
+        $("playError").innerHTML =
+          escapeHtml(err.message) +
+          (err.hint ? " " + escapeHtml(err.hint) : "") +
+          ` <button type="button" class="accent" id="playUpgradeBtn" style="margin-left:8px;">Upgrade plan</button>`;
+        const btn = $("playUpgradeBtn");
+        if (btn) {
+          btn.onclick = () => {
+            if (err.upgrade_plan) {
+              startPlanCheckout(err.upgrade_plan).catch((e) => alert(e.message));
+            } else {
+              goToBillingUpgrade();
+            }
+          };
+        }
+      } else {
+        $("playError").textContent = err.message;
+      }
     } finally {
       $("playBtn").disabled = false;
       $("playBtn").textContent = "Translate with UgaJapa";

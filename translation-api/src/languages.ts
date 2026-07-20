@@ -229,6 +229,12 @@ async function fetchGoogleLanguages(): Promise<LanguageInfo[]> {
 async function buildLanguageCatalog(): Promise<LanguageInfo[]> {
   const byCode = new Map<string, string>();
 
+  // Always seed the built-in global list (en, ja, fr, …) so translation
+  // works without Google — especially for UgaJapa Bot fallback pairs.
+  for (const [code, name] of Object.entries(LANGUAGE_DISPLAY_NAMES)) {
+    byCode.set(code, name);
+  }
+
   try {
     const googleLangs = await fetchGoogleLanguages();
     for (const lang of googleLangs) {
@@ -238,14 +244,26 @@ async function buildLanguageCatalog(): Promise<LanguageInfo[]> {
     console.warn("Failed to fetch Google languages:", err);
   }
 
+  // Regional Ugandan languages always available.
   for (const [code, name] of Object.entries(EXTRA_LANGUAGES)) {
-    if (!byCode.has(code)) byCode.set(code, name);
+    byCode.set(code, name);
   }
 
-  if (byCode.size === 0) {
-    for (const [code, name] of Object.entries(LANGUAGE_DISPLAY_NAMES)) {
-      byCode.set(code, name);
+  try {
+    const { botLanguages } = await import("./ugajapa-bot");
+    const botCodes = await botLanguages();
+    for (const code of botCodes) {
+      if (!byCode.has(code)) {
+        byCode.set(
+          code,
+          LANGUAGE_DISPLAY_NAMES[code] ||
+            EXTRA_LANGUAGES[code] ||
+            code
+        );
+      }
     }
+  } catch (err) {
+    console.warn("Failed to merge bot languages:", err);
   }
 
   return Array.from(byCode.entries())
@@ -292,11 +310,20 @@ export async function isSupportedLanguage(code?: string): Promise<boolean> {
   const normalized = normalizeTranslationCode(code);
   if (!normalized) return false;
 
-  const supported = await getSupportedLanguageCodes();
-  if (supported.has(normalized)) return true;
-
   const base = normalized.split("-")[0];
-  if (supported.has(base)) return true;
+
+  // Built-in + regional codes are always valid (no Google required).
+  if (
+    LANGUAGE_DISPLAY_NAMES[normalized] ||
+    EXTRA_LANGUAGES[normalized] ||
+    LANGUAGE_DISPLAY_NAMES[base] ||
+    EXTRA_LANGUAGES[base]
+  ) {
+    return true;
+  }
+
+  const supported = await getSupportedLanguageCodes();
+  if (supported.has(normalized) || supported.has(base)) return true;
 
   // When the global engine is configured, accept any reasonable ISO/BCP-47 code.
   if (GOOGLE_API_KEY && /^[a-z]{2,3}(-[a-z]{2,8})?$/i.test(normalized)) {

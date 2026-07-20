@@ -6,7 +6,7 @@ import { detectLanguage, isSupportedLanguage, normalizeTranslationCode } from ".
 import { routeTranslate } from "./router";
 import { transcribeAudioBuffer } from "./stt";
 import { evaluateTranslationQuality } from "./quality_eval";
-import { countCharacters, getPlanLimit } from "./usage";
+import { countCharacters, getPlanLimit, quotaExceededPayload } from "./usage";
 import { PDFParse } from "pdf-parse";
 import mammoth from "mammoth";
 
@@ -48,13 +48,7 @@ async function checkQuota(
   const limit = getPlanLimit(req.apiKey.plan);
   const used = await getMonthlyUsage(req.apiKey.userId);
   if (used + characters > limit) {
-    res.status(429).json({
-      error: "Monthly quota exceeded",
-      used,
-      limit,
-      plan: req.apiKey.plan,
-      upgrade_url: "https://api.ugajapa.ac.ug/upgrade",
-    });
+    res.status(429).json(quotaExceededPayload(req.apiKey.plan, used, limit));
     return false;
   }
   return true;

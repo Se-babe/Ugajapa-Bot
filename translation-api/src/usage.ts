@@ -35,6 +35,55 @@ export function getPlanLimit(plan: string): number {
   return PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
 }
 
+/** Suggested next plan when the user needs more quota. */
+export function nextUpgradePlan(plan: string): string | null {
+  if (plan === "free") return "starter";
+  if (plan === "starter") return "business";
+  return null;
+}
+
+export function monthQuotaResetAt(from = new Date()): Date {
+  return new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth() + 1, 1));
+}
+
+export function quotaExceededPayload(plan: string, used: number, limit: number) {
+  const upgrade = nextUpgradePlan(plan);
+  return {
+    error: "Monthly character quota exceeded. Upgrade your plan to continue translating.",
+    code: "QUOTA_EXCEEDED",
+    used,
+    limit,
+    plan,
+    upgrade_plan: upgrade,
+    hint: upgrade
+      ? `Upgrade to ${upgrade} via Settings → Billing (card payment).`
+      : "Contact support@ugajapa.ac.ug for Enterprise unlimited quota.",
+  };
+}
+
+const ACTIVE_SUB_STATUSES = new Set(["active", "trialing", "admin_granted"]);
+
+/**
+ * Paid self-serve plans (starter/business) only count when Stripe has an
+ * active card subscription (or an explicit admin grant). Otherwise demote
+ * to free so plan cannot "stick" without payment authentication.
+ */
+export function effectivePlan(
+  storedPlan: string,
+  stripeSubscriptionStatus: string | null | undefined
+): string {
+  if (storedPlan === "free" || storedPlan === "enterprise") {
+    return storedPlan;
+  }
+  if (
+    (storedPlan === "starter" || storedPlan === "business") &&
+    ACTIVE_SUB_STATUSES.has(stripeSubscriptionStatus || "")
+  ) {
+    return storedPlan;
+  }
+  return "free";
+}
+
 export function getBillingBreakdown(
   plan: string,
   charactersTotal: number

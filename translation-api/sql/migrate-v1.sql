@@ -13,5 +13,9 @@ CREATE TABLE IF NOT EXISTS translation_feedback (
 );
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_status VARCHAR(50);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_current_period_end TIMESTAMPTZ;
 ALTER TABLE billing ADD COLUMN IF NOT EXISTS stripe_session_id VARCHAR(255);
 ALTER TABLE billing ADD COLUMN IF NOT EXISTS stripe_payment_intent_id VARCHAR(255);
+ALTER TABLE billing ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
