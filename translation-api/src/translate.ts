@@ -8,7 +8,7 @@ import {
 } from "./languages";
 import { evaluateTranslationQuality } from "./quality_eval";
 import { routeTranslate } from "./router";
-import { countCharacters, getPlanLimit } from "./usage";
+import { countCharacters, getPlanLimit, quotaExceededPayload } from "./usage";
 
 const BACK_TRANSLATION_ENABLED =
   process.env.BACK_TRANSLATION_ENABLED === "true";
@@ -77,13 +77,7 @@ export async function translateHandler(req: Request, res: Response): Promise<voi
   const used = await getMonthlyUsage(req.apiKey.userId);
 
   if (used + characters > limit) {
-    res.status(429).json({
-      error: "Monthly quota exceeded",
-      used,
-      limit,
-      plan: req.apiKey.plan,
-      upgrade_url: "https://api.ugajapa.ac.ug/upgrade",
-    });
+    res.status(429).json(quotaExceededPayload(req.apiKey.plan, used, limit));
     return;
   }
 

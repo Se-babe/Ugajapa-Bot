@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import { query } from "./db";
 import { sendVerificationEmail } from "./mailer";
 import { recordLoginEvent } from "./login_tracking";
+import { effectivePlan } from "./usage";
 
 const VERIFICATION_CODE_TTL_MINUTES = 15;
 const VERIFICATION_RESEND_COOLDOWN_SECONDS = 60;
@@ -115,9 +116,12 @@ export async function requireAuth(
       full_name: string;
       plan: string;
       active: boolean;
-    }>("SELECT id, email, full_name, plan, active FROM users WHERE id = $1", [
-      decoded.sub,
-    ]);
+      stripe_subscription_status: string | null;
+    }>(
+      `SELECT id, email, full_name, plan, active, stripe_subscription_status
+       FROM users WHERE id = $1`,
+      [decoded.sub]
+    );
 
     if (!userResult.rows[0] || !userResult.rows[0].active) {
       res.status(401).json({ error: "User not found or inactive" });
@@ -129,7 +133,7 @@ export async function requireAuth(
       id: u.id,
       email: u.email,
       full_name: u.full_name,
-      plan: u.plan,
+      plan: effectivePlan(u.plan, u.stripe_subscription_status),
       isAdmin: false,
     };
     req.jti = decoded.jti;
@@ -411,8 +415,11 @@ export async function login(req: Request, res: Response): Promise<void> {
     plan: string;
     active: boolean;
     email_verified: boolean;
+    stripe_subscription_status: string | null;
   }>(
-    "SELECT id, email, password_hash, full_name, plan, active, email_verified FROM users WHERE email = $1",
+    `SELECT id, email, password_hash, full_name, plan, active, email_verified,
+            stripe_subscription_status
+     FROM users WHERE email = $1`,
     [normalizedEmail]
   );
 
@@ -464,18 +471,19 @@ export async function login(req: Request, res: Response): Promise<void> {
     req,
   });
 
+  const plan = effectivePlan(user.plan, user.stripe_subscription_status);
   const token = signToken({
     id: user.id,
     email: user.email,
     full_name: user.full_name,
-    plan: user.plan,
+    plan,
   });
 
   res.json({
     user_id: user.id,
     email: user.email,
     token,
-    plan: user.plan,
+    plan,
   });
 }
 
@@ -503,8 +511,10 @@ export async function me(req: Request, res: Response): Promise<void> {
     full_name: string;
     plan: string;
     created_at: Date;
+    stripe_subscription_status: string | null;
   }>(
-    "SELECT id, email, full_name, plan, created_at FROM users WHERE id = $1",
+    `SELECT id, email, full_name, plan, created_at, stripe_subscription_status
+     FROM users WHERE id = $1`,
     [req.user.id]
   );
 
@@ -518,7 +528,7 @@ export async function me(req: Request, res: Response): Promise<void> {
     id: user.id,
     email: user.email,
     full_name: user.full_name,
-    plan: user.plan,
+    plan: effectivePlan(user.plan, user.stripe_subscription_status),
     role: "user",
     created_at: user.created_at,
   });

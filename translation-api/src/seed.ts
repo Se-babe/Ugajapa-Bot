@@ -53,6 +53,25 @@ async function applyMigrations(): Promise<void> {
       password_hash VARCHAR(255) NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(255);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id VARCHAR(255);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_status VARCHAR(50);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_current_period_end TIMESTAMPTZ;
+    ALTER TABLE billing ADD COLUMN IF NOT EXISTS stripe_session_id VARCHAR(255);
+    ALTER TABLE billing ADD COLUMN IF NOT EXISTS stripe_payment_intent_id VARCHAR(255);
+    ALTER TABLE billing ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
+
+    -- Revoke unpaid self-serve upgrades (plan was set without Stripe payment).
+    UPDATE users
+    SET plan = 'free',
+        stripe_subscription_id = NULL,
+        stripe_subscription_status = NULL
+    WHERE plan IN ('starter', 'business')
+      AND (
+        stripe_subscription_status IS NULL
+        OR stripe_subscription_status NOT IN ('active', 'trialing', 'admin_granted')
+      );
   `);
 }
 

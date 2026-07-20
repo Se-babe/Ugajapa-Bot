@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { query } from "./db";
+import { effectivePlan } from "./usage";
 
 export type ApiKeyContext = {
   keyId: string;
@@ -220,8 +221,10 @@ export async function requireApiKey(
     revoked_at: Date | null;
     plan: string;
     active: boolean;
+    stripe_subscription_status: string | null;
   }>(
-    `SELECT k.id, k.user_id, k.key_hash, k.name, k.revoked_at, u.plan, u.active
+    `SELECT k.id, k.user_id, k.key_hash, k.name, k.revoked_at, u.plan, u.active,
+            u.stripe_subscription_status
      FROM api_keys k
      JOIN users u ON u.id = k.user_id
      WHERE k.key_prefix = $1`,
@@ -248,7 +251,7 @@ export async function requireApiKey(
     req.apiKey = {
       keyId: candidate.id,
       userId: candidate.user_id,
-      plan: candidate.plan,
+      plan: effectivePlan(candidate.plan, candidate.stripe_subscription_status),
       name: candidate.name,
     };
     next();

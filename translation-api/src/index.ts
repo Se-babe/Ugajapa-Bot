@@ -44,6 +44,16 @@ import {
   triggerBilling,
   upgradePlan,
 } from "./billing";
+import {
+  createPlanCheckoutSession,
+  createInvoiceCheckoutSession,
+  createBillingPortalSession,
+  getBillingConfig,
+  getCheckoutSessionStatus,
+  confirmCheckoutSession,
+  handleStripeWebhook,
+  isStripeEnabled,
+} from "./stripe_billing";
 import { botHealth } from "./ugajapa-bot";
 import { pool } from "./db";
 import { ensureSchema, seedAdmin, waitForDb } from "./seed";
@@ -87,6 +97,14 @@ function asyncHandler(fn: RequestHandler): RequestHandler {
 }
 
 app.use(cors());
+
+// Stripe webhooks require the raw body for signature verification.
+app.post(
+  "/billing/webhook",
+  express.raw({ type: "application/json" }),
+  asyncHandler(handleStripeWebhook)
+);
+
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "..", "public")));
 
@@ -139,6 +157,8 @@ app.get(
         process.env.GROQ_WHISPER_MODEL || "whisper-large-v3-turbo",
       quality_ai: isAiQualityEnabled(),
       translation_cache: getTranslationCacheStats(),
+      stripe_enabled: isStripeEnabled(),
+      payment_methods: ["card"],
     });
   })
 );
@@ -203,9 +223,15 @@ app.post(
 // Usage & billing
 app.get("/usage/summary", asyncHandler(requireAuth), asyncHandler(usageSummary));
 app.get("/usage/history", asyncHandler(requireAuth), asyncHandler(usageHistory));
-app.get("/billing/:month", asyncHandler(requireAuth), asyncHandler(getBillingMonth));
+app.get("/billing/config", asyncHandler(getBillingConfig));
+app.get("/billing/checkout/status", asyncHandler(requireAuth), asyncHandler(getCheckoutSessionStatus));
+app.post("/billing/checkout/confirm", asyncHandler(requireAuth), asyncHandler(confirmCheckoutSession));
 app.get("/billing", asyncHandler(requireAuth), asyncHandler(getBillingHistory));
+app.get("/billing/:month", asyncHandler(requireAuth), asyncHandler(getBillingMonth));
 app.post("/billing/plan", asyncHandler(requireAuth), asyncHandler(upgradePlan));
+app.post("/billing/checkout/plan", asyncHandler(requireAuth), asyncHandler(createPlanCheckoutSession));
+app.post("/billing/checkout/invoice", asyncHandler(requireAuth), asyncHandler(createInvoiceCheckoutSession));
+app.post("/billing/portal", asyncHandler(requireAuth), asyncHandler(createBillingPortalSession));
 
 // Dashboard (JWT — for the web UI at /)
 app.get("/dashboard/languages", asyncHandler(requireAuth), asyncHandler(languagesHandler));

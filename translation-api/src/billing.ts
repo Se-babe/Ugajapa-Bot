@@ -1,7 +1,15 @@
 import { Request, Response } from "express";
 import cron from "node-cron";
 import { query } from "./db";
-import { getBillingBreakdown, getPlanLimit, PLAN_LIMITS, PLAN_ORDER, PLAN_PRICES, type BillingBreakdown } from "./usage";
+import {
+  getBillingBreakdown,
+  getPlanLimit,
+  PLAN_LIMITS,
+  PLAN_PRICES,
+  nextUpgradePlan,
+  type BillingBreakdown,
+} from "./usage";
+import { isStripeEnabled, payableAmountUsd, resolvePlanPeriod } from "./stripe_billing";
 
 export async function usageSummary(req: Request, res: Response): Promise<void> {
   if (!req.user) {
@@ -21,16 +29,46 @@ export async function usageSummary(req: Request, res: Response): Promise<void> {
   const used = parseInt(result.rows[0].total, 10);
   const limit = getPlanLimit(req.user.plan);
   const billing = getBillingBreakdown(req.user.plan, used);
+  const unlimited = limit === Number.MAX_SAFE_INTEGER;
+  const remaining = unlimited ? null : Math.max(0, limit - used);
+  const quotaExceeded = !unlimited && used >= limit;
+  const quotaWarning =
+    !unlimited && !quotaExceeded && used / limit >= 0.85;
+  const period = await resolvePlanPeriod(req.user.id);
+  const upgradePlan = nextUpgradePlan(req.user.plan);
 
   res.json({
     month: new Date().toISOString().slice(0, 7),
     plan: req.user.plan,
     characters_used: used,
-    characters_limit: limit === Number.MAX_SAFE_INTEGER ? null : limit,
-    remaining: limit === Number.MAX_SAFE_INTEGER ? null : Math.max(0, limit - used),
-    quota_exceeded: used >= limit,
+    characters_limit: unlimited ? null : limit,
+    remaining,
+    quota_exceeded: quotaExceeded,
+    quota_warning: quotaWarning,
+    upgrade_plan: upgradePlan,
+    plan_period_end: period.plan_period_end,
+    plan_period_label: period.plan_period_label,
+    cancel_at_period_end: period.cancel_at_period_end,
     estimated_bill_usd: billing.total_usd,
     billing,
+    stripe_enabled: isStripeEnabled(),
+    payment_methods: ["card"],
+    notification: quotaExceeded
+      ? {
+          level: "error",
+          title: "Character quota exceeded",
+          message:
+            "You have used all characters on your current plan. Upgrade to continue translating.",
+          action: upgradePlan ? `Upgrade to ${upgradePlan}` : "Contact support",
+        }
+      : quotaWarning
+        ? {
+            level: "warning",
+            title: "Approaching quota limit",
+            message: `You have used ${Math.round((used / limit) * 100)}% of your monthly characters.`,
+            action: upgradePlan ? `Upgrade to ${upgradePlan}` : "Contact support",
+          }
+        : null,
     plans: Object.entries(PLAN_PRICES).map(([code, p]) => ({
       code,
       label: p.label,
@@ -87,27 +125,47 @@ export async function getBillingMonth(req: Request, res: Response): Promise<void
     characters_total: string;
     amount_usd: string;
     paid: boolean;
+    paid_at: Date | null;
+    stripe_session_id: string | null;
   }>(
-    `SELECT month, characters_total::text, amount_usd::text, paid
+    `SELECT month, characters_total::text, amount_usd::text, paid, paid_at, stripe_session_id
      FROM billing WHERE user_id = $1 AND month = $2`,
     [req.user.id, month]
   );
 
+  const userStripe = await query<{ stripe_subscription_status: string | null }>(
+    "SELECT stripe_subscription_status FROM users WHERE id = $1",
+    [req.user.id]
+  );
+  const subStatus = userStripe.rows[0]?.stripe_subscription_status || null;
+
   if (!bill.rows[0]) {
-    // Compute on the fly if not yet generated
     const computed = await computeUserBill(req.user.id, month, req.user.plan);
-    res.json(computed);
+    const payable = payableAmountUsd(req.user.plan, computed.characters_total, subStatus);
+    res.json({
+      ...computed,
+      payable_usd: payable.payable_usd,
+      base_covered_by_subscription: payable.base_covered,
+      stripe_enabled: isStripeEnabled(),
+      payment_methods: ["card"],
+    });
     return;
   }
 
   const row = bill.rows[0];
   const characters_total = parseInt(row.characters_total, 10);
+  const payable = payableAmountUsd(req.user.plan, characters_total, subStatus);
   res.json({
     month: row.month,
     characters_total,
     plan: req.user.plan,
     amount_usd: parseFloat(row.amount_usd),
+    payable_usd: row.paid ? 0 : payable.payable_usd,
     paid: row.paid,
+    paid_at: row.paid_at?.toISOString() || null,
+    base_covered_by_subscription: payable.base_covered,
+    stripe_enabled: isStripeEnabled(),
+    payment_methods: ["card"],
     billing: getBillingBreakdown(req.user.plan, characters_total),
   });
 }
@@ -123,25 +181,40 @@ export async function getBillingHistory(req: Request, res: Response): Promise<vo
     characters_total: string;
     amount_usd: string;
     paid: boolean;
+    paid_at: Date | null;
     generated_at: Date;
   }>(
-    `SELECT month, characters_total::text, amount_usd::text, paid, generated_at
+    `SELECT month, characters_total::text, amount_usd::text, paid, paid_at, generated_at
      FROM billing WHERE user_id = $1 ORDER BY month DESC`,
     [req.user.id]
   );
 
+  const userStripe = await query<{ stripe_subscription_status: string | null }>(
+    "SELECT stripe_subscription_status FROM users WHERE id = $1",
+    [req.user.id]
+  );
+  const subStatus = userStripe.rows[0]?.stripe_subscription_status || null;
+
   res.json({
-    bills: result.rows.map((r) => ({
-      month: r.month,
-      characters_total: parseInt(r.characters_total, 10),
-      amount_usd: parseFloat(r.amount_usd),
-      paid: r.paid,
-      generated_at: r.generated_at.toISOString(),
-    })),
+    stripe_enabled: isStripeEnabled(),
+    payment_methods: ["card"],
+    bills: result.rows.map((r) => {
+      const chars = parseInt(r.characters_total, 10);
+      const payable = payableAmountUsd(req.user!.plan, chars, subStatus);
+      return {
+        month: r.month,
+        characters_total: chars,
+        amount_usd: parseFloat(r.amount_usd),
+        payable_usd: r.paid ? 0 : payable.payable_usd,
+        paid: r.paid,
+        paid_at: r.paid_at?.toISOString() || null,
+        generated_at: r.generated_at.toISOString(),
+      };
+    }),
   });
 }
 
-async function computeUserBill(
+export async function computeUserBill(
   userId: string,
   month: string,
   plan: string
@@ -229,7 +302,7 @@ export function startBillingCron(): void {
   });
 }
 
-/** Self-service plan upgrade (upgrade only — no downgrades). */
+/** Self-service plan upgrade — requires card payment via Stripe Checkout. */
 export async function upgradePlan(req: Request, res: Response): Promise<void> {
   if (!req.user) {
     res.status(401).json({ error: "Unauthorized" });
@@ -246,34 +319,16 @@ export async function upgradePlan(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const currentIdx = PLAN_ORDER.indexOf(
-    req.user.plan as (typeof PLAN_ORDER)[number]
-  );
-  const newIdx = PLAN_ORDER.indexOf(plan as (typeof PLAN_ORDER)[number]);
-  if (newIdx <= currentIdx) {
-    res.status(400).json({
-      error: "You can only upgrade to a higher plan",
-      current_plan: req.user.plan,
+  if (!isStripeEnabled()) {
+    res.status(503).json({
+      error: "Plan upgrades require card payment — Stripe is not configured",
+      hint: "Set STRIPE_SECRET_KEY to enable billing",
     });
     return;
   }
 
-  const result = await query<{ id: string; email: string; plan: string }>(
-    "UPDATE users SET plan = $1 WHERE id = $2 RETURNING id, email, plan",
-    [plan, req.user.id]
-  );
-
-  if (!result.rows[0]) {
-    res.status(404).json({ error: "User not found" });
-    return;
-  }
-
-  res.json({
-    message: `Plan upgraded to ${plan}`,
-    plan: result.rows[0].plan,
-    billing_note:
-      "Your new plan limits apply immediately. Monthly charges are calculated from usage at month end.",
-  });
+  const { createPlanCheckoutSession } = await import("./stripe_billing");
+  await createPlanCheckoutSession(req, res);
 }
 
 export async function adminMarkBillPaid(
@@ -404,9 +459,19 @@ export async function adminSetPlan(req: Request, res: Response): Promise<void> {
     return;
   }
 
+  // Self-serve paid tiers still need a payment marker so effectivePlan()
+  // does not demote them. Admin grants are tagged explicitly (not card-paid).
+  const subStatus =
+    plan === "starter" || plan === "business" ? "admin_granted" : null;
+
   const result = await query(
-    "UPDATE users SET plan = $1 WHERE id = $2 RETURNING id, email, plan",
-    [plan, id]
+    `UPDATE users
+     SET plan = $1,
+         stripe_subscription_status = $2,
+         stripe_subscription_id = CASE WHEN $1 IN ('free') THEN NULL ELSE stripe_subscription_id END
+     WHERE id = $3
+     RETURNING id, email, plan, stripe_subscription_status`,
+    [plan, subStatus, id]
   );
 
   if (!result.rowCount) {
@@ -414,7 +479,14 @@ export async function adminSetPlan(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  res.json({ message: "Plan updated", user: result.rows[0] });
+  res.json({
+    message: "Plan updated",
+    user: result.rows[0],
+    note:
+      plan === "starter" || plan === "business"
+        ? "Admin grant — not a card payment. Customer self-serve upgrades still require Stripe Checkout."
+        : undefined,
+  });
 }
 
 export async function adminBillingSummary(req: Request, res: Response): Promise<void> {
